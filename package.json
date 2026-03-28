@@ -1,0 +1,17 @@
+{
+  "name": "merged-discord-bot",
+  "version": "1.0.0",
+  "description": "Combined channel rotator and attachment counter bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3"
+  },
+  "author": "Your Name",
+  "license": "MIT"
+}
