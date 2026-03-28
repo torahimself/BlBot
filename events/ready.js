@@ -38,7 +38,7 @@ module.exports = {
     try {
       const attachmentCounter = new AttachmentCounter(client);
       const reportGenerator = new ReportGenerator(client);
-      const scheduler = new Scheduler(client, attachmentCounter, reportGenerator);
+      const scheduler = new Scheduler(client, attachmentCounter, reportGenerator, config);
       client.scheduler = scheduler;
       scheduler.scheduleWeeklyReport();
       console.log('📊 Attachment counter system activated');
