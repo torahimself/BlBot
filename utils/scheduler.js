@@ -5,7 +5,7 @@ class Scheduler {
     this.client = client;
     this.attachmentCounter = attachmentCounter;
     this.reportGenerator = reportGenerator;
-    this.config = config; // store the full config
+    this.config = config;
     this.isRunning = false;
     this.isMonthlyRunning = false;
   }
@@ -82,11 +82,11 @@ class Scheduler {
     return { weeklyTask, monthlyTask };
   }
 
-  // Generate and send report (weekly or monthly)
+  // Generate and send report (weekly or monthly) – with updated logic
   async generateAndSendReport(reportType = 'weekly') {
     const isMonthly = reportType === 'monthly';
-    const reportChannelId = isMonthly ? this.config.attachmentCounter.monthlyReportChannel : this.config.attachmentCounter.reportChannel;
-    
+    const reportChannelId = this.config.attachmentCounter.reportChannel; // same channel for both
+
     try {
       const reportChannel = this.client.channels.cache.get(reportChannelId);
       if (!reportChannel) {
@@ -94,7 +94,6 @@ class Scheduler {
         return;
       }
 
-      // Check if bot can send messages
       const canSend = reportChannel.permissionsFor(this.client.user)?.has('SendMessages');
       if (!canSend) {
         console.log(`❌ Bot cannot send messages to ${reportType} report channel`);
@@ -102,67 +101,54 @@ class Scheduler {
       }
 
       console.log(`🔍 Scanning for ${reportType} media...`);
-      
       const userStats = await this.attachmentCounter.scanChannels(this.config, reportType);
-      
       console.log(`📊 ${reportType.toUpperCase()} scan completed. Users found: ${userStats.size}`);
-      
+
       if (userStats.size === 0) {
-        console.log(`ℹ️  No media found from tracked roles this ${reportType}`);
-        try {
-          await reportChannel.send(`📊 **${reportType.toUpperCase()} MEDIA REPORT**\n\nNo media found from tracked roles this ${reportType}. 📭`);
-        } catch (error) {
-          console.error(`❌ Cannot send to ${reportType} report channel:`, error.message);
-        }
+        await reportChannel.send(`📊 **${reportType.toUpperCase()} MEDIA REPORT**\n\nNo media found from tracked roles this ${reportType}. 📭`);
         return;
       }
 
-      const topUsers = this.attachmentCounter.getTopUsers(userStats, 15); // Show more users
-      const channelBreakdown = this.attachmentCounter.getChannelBreakdown(userStats, this.attachmentCounter.getAllChannelsToScan(this.config));
       const totalMedia = this.reportGenerator.calculateTotalMedia(userStats);
+      const topUsersLimit = isMonthly ? 10 : 15;
+      const topUsers = this.attachmentCounter.getTopUsers(userStats, topUsersLimit);
+      const channelBreakdown = this.attachmentCounter.getChannelBreakdown(userStats, this.attachmentCounter.getAllChannelsToScan(this.config));
 
-      console.log(`📈 Generating ${reportType} report: ${totalMedia} total media, ${topUsers.length} top users`);
-
-      // Send main report with ALL user mentions
-      console.log(`📊 Generating ${reportType} main report...`);
+      // Main embed
       const mainEmbed = this.reportGenerator.generateMainReport(topUsers, channelBreakdown, totalMedia, reportType, userStats);
-      try {
-        // Create mention list for all users
-        const allUserMentions = Array.from(userStats.values())
-          .map(user => user.userMention)
-          .join(' ');
-          
-        await reportChannel.send({ 
-          content: `📊 **${reportType.toUpperCase()} MEDIA REPORT**\n\n**All Contributors:** ${allUserMentions}\n\n**Total Media:** ${totalMedia} items from ${userStats.size} users`, 
-          embeds: [mainEmbed] 
-        });
-      } catch (error) {
-        console.error(`❌ Cannot send ${reportType} main report:`, error.message);
-        return;
-      }
 
-      // Send individual user reports with detailed breakdown
-      console.log(`👤 Generating ${userStats.size} individual user reports for ${reportType}...`);
-      let userReportCount = 0;
-      for (const [userId, userData] of userStats) {
-        if (userData.total > 0) {
-          try {
-            const userEmbed = this.reportGenerator.generateUserEmbed(userId, userData, this.client, reportType);
-            await reportChannel.send({ 
-              content: `**User Report:** <@${userId}>`, 
-              embeds: [userEmbed] 
-            });
-            userReportCount++;
-            
-            // Delay to avoid rate limits
-            await new Promise(resolve => setTimeout(resolve, 300));
-          } catch (error) {
-            console.error(`❌ Error sending ${reportType} user report for ${userId}:`, error.message);
+      // Send main report with all user mentions
+      const allUserMentions = Array.from(userStats.values())
+        .map(user => user.userMention)
+        .join(' ');
+      await reportChannel.send({
+        content: `📊 **${reportType.toUpperCase()} MEDIA REPORT**\n\n**All Contributors:** ${allUserMentions}\n\n**Total Media:** ${totalMedia} items from ${userStats.size} users`,
+        embeds: [mainEmbed]
+      });
+
+      // For monthly, send individual user reports with detailed breakdown
+      if (isMonthly) {
+        console.log(`👤 Generating individual user reports for monthly...`);
+        let userReportCount = 0;
+        for (const [userId, userData] of userStats) {
+          if (userData.total > 0) {
+            try {
+              const userEmbed = this.reportGenerator.generateUserEmbed(userId, userData, this.client, reportType);
+              await reportChannel.send({
+                content: `**User Report:** <@${userId}>`,
+                embeds: [userEmbed]
+              });
+              userReportCount++;
+              await new Promise(resolve => setTimeout(resolve, 300));
+            } catch (error) {
+              console.error(`❌ Error sending monthly user report for ${userId}:`, error.message);
+            }
           }
         }
+        console.log(`✅ Monthly report complete: Sent ${userReportCount} user reports`);
+      } else {
+        console.log(`✅ Weekly report complete: Main report sent.`);
       }
-
-      console.log(`✅ ${reportType.toUpperCase()} report generation complete! Sent ${userReportCount} user reports`);
 
     } catch (error) {
       console.error(`❌ Error generating ${reportType} report:`, error);
