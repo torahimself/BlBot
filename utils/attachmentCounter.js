@@ -8,36 +8,37 @@ class AttachmentCounter {
     this.allChannelsCache = [];
   }
 
-  // Get all channels including category expansion
+  // Get all channels from specified categories, excluding blacklisted ones
   getAllChannelsToScan(config) {
     if (this.allChannelsCache.length > 0) {
       return this.allChannelsCache;
     }
-    
-    const allChannels = [...config.attachmentCounter.channels];
-    
-    // Add all channels from specified categories
-    for (const categoryId of config.attachmentCounter.categories || []) {
+
+    const allChannels = [];
+
+    // Get all text channels from each category
+    for (const categoryId of config.attachmentCounter.categoriesToScan || []) {
       const category = this.client.channels.cache.get(categoryId);
-      if (category && category.type === 4) {
+      if (category && category.type === 4) { // GUILD_CATEGORY
         const categoryChannels = category.children.cache
           .filter(ch => ch.isTextBased() && !ch.isThread())
           .map(ch => ch.id);
-        
-        console.log(`📂 Adding ${categoryChannels.length} channels from category: ${category.name}`);
         allChannels.push(...categoryChannels);
+        console.log(`📂 Added ${categoryChannels.length} channels from category: ${category.name}`);
+      } else {
+        console.log(`⚠️ Category not found or invalid: ${categoryId}`);
       }
     }
-    
-    // Remove duplicates
+
+    // Remove duplicates and filter out excluded channels
     const uniqueChannels = [...new Set(allChannels)];
-    this.allChannelsCache = uniqueChannels;
-    
-    console.log(`📊 Total channels to scan: ${uniqueChannels.length}`);
-    console.log(`📁 From config: ${config.attachmentCounter.channels.length}`);
-    console.log(`📂 From categories: ${uniqueChannels.length - config.attachmentCounter.channels.length}`);
-    
-    return uniqueChannels;
+    const filteredChannels = uniqueChannels.filter(ch => !config.attachmentCounter.excludedChannels.includes(ch));
+
+    this.allChannelsCache = filteredChannels;
+
+    console.log(`📊 Total channels to scan: ${filteredChannels.length}`);
+    console.log(`🚫 Excluded ${uniqueChannels.length - filteredChannels.length} channels`);
+    return filteredChannels;
   }
 
   // Check if user has any of the tracked roles
