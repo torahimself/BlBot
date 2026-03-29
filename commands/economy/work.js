@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { updateBalance } = require('../../utils/economy/shopManager.js');
 const db = require('../../utils/economy/database.js');
 const allowedChannels = ['1415933682748751923', '1464140979148689550'];
 
@@ -7,10 +6,9 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('work')
         .setDescription('Work daily to earn coins (250-1000)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.SendMessages), // Anyone can use, but cooldown applies
+        .setDefaultMemberPermissions(PermissionFlagsBits.SendMessages),
 
     async execute(interaction) {
-        // Channel restriction
         if (!allowedChannels.includes(interaction.channelId)) {
             return interaction.editReply(`❌ This command can only be used in <#1415933682748751923> or <#1464140979148689550>.`);
         }
@@ -19,15 +17,20 @@ module.exports = {
         const isAdmin = interaction.member.permissions.has('Administrator');
         const now = Date.now();
 
-        // Get last work time from database
+        // Get current lastWorkTime
         const row = await new Promise((resolve) => {
             db.get('SELECT lastWorkTime FROM users WHERE userId = ?', [userId], (err, row) => {
-                resolve(row);
+                if (err) {
+                    console.error('Error fetching user:', err);
+                    resolve(null);
+                } else {
+                    resolve(row);
+                }
             });
         });
 
         const lastWorkTime = row ? row.lastWorkTime : 0;
-        const cooldownMs = 24 * 60 * 60 * 1000; // 24 hours
+        const cooldownMs = 24 * 60 * 60 * 1000;
         const timeLeft = lastWorkTime + cooldownMs - now;
 
         if (!isAdmin && timeLeft > 0) {
@@ -36,16 +39,26 @@ module.exports = {
             return interaction.editReply(`⏰ You can work again in **${hoursLeft}h ${minutesLeft}m**. Administrators have no cooldown.`);
         }
 
-        // Calculate reward (250-1000)
         const reward = Math.floor(Math.random() * (1000 - 250 + 1)) + 250;
 
-        // Update balance and lastWorkTime
-        await updateBalance(userId, reward);
-        await new Promise((resolve) => {
-            db.run('UPDATE users SET lastWorkTime = ? WHERE userId = ?', [now, userId], (err) => {
-                if (err) console.error('Failed to update lastWorkTime:', err);
-                resolve();
-            });
+        // Atomic update: add reward and set lastWorkTime
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO users (userId, balance, lastWorkTime) 
+                 VALUES (?, ?, ?) 
+                 ON CONFLICT(userId) DO UPDATE SET 
+                 balance = balance + ?, 
+                 lastWorkTime = ?`,
+                [userId, reward, now, reward, now],
+                (err) => {
+                    if (err) {
+                        console.error('Failed to update work data:', err);
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                }
+            );
         });
 
         await interaction.editReply(`💼 You worked hard and earned **${reward}** coins! ${isAdmin ? '(Admin: no cooldown applied)' : 'Come back tomorrow for more.'}`);
