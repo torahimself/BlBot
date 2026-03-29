@@ -1,3 +1,4 @@
+const cooldownCache = new Map();
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const db = require('../../utils/economy/database.js');
 const allowedChannels = ['1415933682748751923', '1464140979148689550'];
