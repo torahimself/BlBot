@@ -18,13 +18,14 @@ async function processMessage(message) {
     const userId = message.author.id;
 
     return new Promise((resolve) => {
-        db.get('SELECT wordCount, balance FROM users WHERE userId = ?', [userId], async (err, row) => {
+        db.get('SELECT wordCount, balance, lastWorkTime FROM users WHERE userId = ?', [userId], (err, row) => {
             if (err) {
                 console.error(err);
                 return resolve();
             }
             let wordCount = row ? row.wordCount : 0;
             let balance = row ? row.balance : 0;
+            let lastWorkTime = row ? row.lastWorkTime : 0;
             let totalReward = 0;
 
             wordCount += words;
@@ -36,21 +37,35 @@ async function processMessage(message) {
 
             if (totalReward > 0) {
                 balance += totalReward;
+                // Update balance, wordCount, but preserve lastWorkTime
                 db.run(
-                    'INSERT OR REPLACE INTO users (userId, balance, wordCount) VALUES (?, ?, ?)',
-                    [userId, balance, wordCount],
+                    `INSERT INTO users (userId, balance, wordCount, lastWorkTime) 
+                     VALUES (?, ?, ?, ?)
+                     ON CONFLICT(userId) DO UPDATE SET 
+                     balance = excluded.balance,
+                     wordCount = excluded.wordCount,
+                     lastWorkTime = COALESCE(lastWorkTime, excluded.lastWorkTime)`,
+                    [userId, balance, wordCount, lastWorkTime],
                     (err) => {
                         if (err) console.error(err);
                         resolve();
                     }
                 );
             } else {
-                db.run('INSERT OR REPLACE INTO users (userId, wordCount, balance) VALUES (?, ?, ?)',
-                    [userId, wordCount, balance],
+                // Just update wordCount, preserve others
+                db.run(
+                    `INSERT INTO users (userId, wordCount, balance, lastWorkTime) 
+                     VALUES (?, ?, ?, ?)
+                     ON CONFLICT(userId) DO UPDATE SET 
+                     wordCount = excluded.wordCount,
+                     balance = COALESCE(balance, excluded.balance),
+                     lastWorkTime = COALESCE(lastWorkTime, excluded.lastWorkTime)`,
+                    [userId, wordCount, balance, lastWorkTime],
                     (err) => {
                         if (err) console.error(err);
                         resolve();
-                    });
+                    }
+                );
             }
         });
     });
