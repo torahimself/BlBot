@@ -10,7 +10,7 @@ const db = new sqlite3.Database(dbPath);
 
 // Initialize tables
 db.serialize(() => {
-    // Users table: balance, word count, last daily
+    // Users table: balance, word count, last daily, last work time
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
             userId TEXT PRIMARY KEY,
@@ -20,6 +20,17 @@ db.serialize(() => {
             lastWorkTime INTEGER DEFAULT 0
         )
     `);
+
+    // Ensure lastWorkTime column exists (for older databases or if column missing)
+    db.run("ALTER TABLE users ADD COLUMN lastWorkTime INTEGER DEFAULT 0", (err) => {
+        if (err && !err.message.includes('duplicate column')) {
+            console.error('Error adding lastWorkTime column:', err.message);
+        } else if (err && err.message.includes('duplicate column')) {
+            // Column already exists – ignore
+        } else {
+            console.log('✅ Ensured lastWorkTime column exists in users table');
+        }
+    });
 
     // Purchased roles
     db.run(`
