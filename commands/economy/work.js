@@ -17,43 +17,53 @@ module.exports = {
         const isAdmin = interaction.member.permissions.has('Administrator');
         const now = Date.now();
 
-        // Use a transaction to avoid race conditions
-        db.serialize(async () => {
-            // First, get current lastWorkTime and balance
-            db.get('SELECT lastWorkTime, balance FROM users WHERE userId = ?', [userId], async (err, row) => {
+        // Get current lastWorkTime
+        const row = await new Promise((resolve) => {
+            db.get('SELECT lastWorkTime FROM users WHERE userId = ?', [userId], (err, row) => {
                 if (err) {
-                    console.error('Error fetching user:', err);
-                    return interaction.editReply('❌ An error occurred. Please try again later.');
+                    console.error('[WORK] Error fetching user:', err);
+                    resolve(null);
+                } else {
+                    resolve(row);
                 }
-
-                let lastWorkTime = row ? row.lastWorkTime : 0;
-                let balance = row ? row.balance : 0;
-                const cooldownMs = 24 * 60 * 60 * 1000;
-                const timeLeft = lastWorkTime + cooldownMs - now;
-
-                if (!isAdmin && timeLeft > 0) {
-                    const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
-                    const minutesLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-                    return interaction.editReply(`⏰ You can work again in **${hoursLeft}h ${minutesLeft}m**. Administrators have no cooldown.`);
-                }
-
-                const reward = Math.floor(Math.random() * (1000 - 250 + 1)) + 250;
-                const newBalance = balance + reward;
-
-                // Update the user record: set balance and lastWorkTime
-                db.run(
-                    `INSERT OR REPLACE INTO users (userId, balance, lastWorkTime) VALUES (?, ?, ?)`,
-                    [userId, newBalance, now],
-                    (updateErr) => {
-                        if (updateErr) {
-                            console.error('Error updating work data:', updateErr);
-                            return interaction.editReply('❌ Failed to save work data. Please try again.');
-                        }
-                        console.log(`[WORK] User ${userId} earned ${reward}, new balance ${newBalance}, lastWorkTime set to ${now}`);
-                        interaction.editReply(`💼 You worked hard and earned **${reward}** coins! ${isAdmin ? '(Admin: no cooldown applied)' : 'Come back tomorrow for more.'}`);
-                    }
-                );
             });
         });
+
+        const lastWorkTime = row ? row.lastWorkTime : 0;
+        const cooldownMs = 24 * 60 * 60 * 1000;
+        const timeLeft = lastWorkTime + cooldownMs - now;
+
+        console.log(`[WORK] User ${userId}, lastWorkTime=${lastWorkTime}, now=${now}, timeLeft=${timeLeft}`);
+
+        if (!isAdmin && timeLeft > 0) {
+            const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
+            const minutesLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+            return interaction.editReply(`⏰ You can work again in **${hoursLeft}h ${minutesLeft}m**. Administrators have no cooldown.`);
+        }
+
+        const reward = Math.floor(Math.random() * (1000 - 250 + 1)) + 250;
+
+        // Atomic update: add reward and set lastWorkTime
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO users (userId, balance, lastWorkTime) 
+                 VALUES (?, ?, ?) 
+                 ON CONFLICT(userId) DO UPDATE SET 
+                 balance = balance + ?, 
+                 lastWorkTime = ?`,
+                [userId, reward, now, reward, now],
+                (err) => {
+                    if (err) {
+                        console.error('[WORK] Failed to update work data:', err);
+                        reject(err);
+                    } else {
+                        console.log(`[WORK] Updated lastWorkTime for ${userId} to ${now}`);
+                        resolve();
+                    }
+                }
+            );
+        });
+
+        await interaction.editReply(`💼 You worked hard and earned **${reward}** coins! ${isAdmin ? '(Admin: no cooldown applied)' : 'Come back tomorrow for more.'}`);
     }
 };
