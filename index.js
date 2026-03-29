@@ -1,3 +1,12 @@
+const fs = require('fs');
+const path = require('path');
+
+// Ensure data directory exists for SQLite database
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+    console.log('✅ Created data directory for database');
+}
 const express = require('express');
 const { Client, GatewayIntentBits } = require('discord.js');
 const config = require('./config.js');
