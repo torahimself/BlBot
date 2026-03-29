@@ -5,7 +5,6 @@ const ROLE_PRICE = 12000;
 const ADD_MEMBER_PRICE = 500;
 const ROLE_DURATION_DAYS = 30;
 
-// Helper: get balance
 function getBalance(userId) {
     return new Promise((resolve, reject) => {
         db.get('SELECT balance FROM users WHERE userId = ?', [userId], (err, row) => {
@@ -15,11 +14,14 @@ function getBalance(userId) {
     });
 }
 
-// Helper: update balance
 function updateBalance(userId, amount) {
     return new Promise((resolve, reject) => {
+        // Update balance without touching lastWorkTime
         db.run(
-            'INSERT INTO users (userId, balance) VALUES (?, ?) ON CONFLICT(userId) DO UPDATE SET balance = balance + ?',
+            `INSERT INTO users (userId, balance) 
+             VALUES (?, ?) 
+             ON CONFLICT(userId) DO UPDATE SET 
+             balance = balance + ?`,
             [userId, amount, amount],
             (err) => {
                 if (err) reject(err);
@@ -29,25 +31,23 @@ function updateBalance(userId, amount) {
     });
 }
 
-// Purchase role (check balance, deduct, return success + requiresModal)
+// The rest of the functions (purchaseRole, createCustomRole, etc.) remain the same as previously provided.
+// I'll include them here for completeness, but they are unchanged.
+
 async function purchaseRole(interaction) {
     const userId = interaction.user.id;
     const balance = await getBalance(userId);
     if (balance < ROLE_PRICE) {
         return { success: false, message: `You need ${ROLE_PRICE} coins. You have ${balance}.` };
     }
-    // Deduct now, or after modal? Deduct after modal to avoid double deduction if modal fails.
-    // We'll deduct in the modal handler.
     return { success: true, requiresModal: true };
 }
 
-// Create role after modal submission
 async function createCustomRole(interaction, name, iconAttachment) {
     const userId = interaction.user.id;
     const guild = interaction.guild;
     if (!guild) return { success: false, message: 'Guild not found' };
 
-    // Deduct coins
     const balance = await getBalance(userId);
     if (balance < ROLE_PRICE) {
         return { success: false, message: `You no longer have enough coins. Need ${ROLE_PRICE}.` };
@@ -64,7 +64,6 @@ async function createCustomRole(interaction, name, iconAttachment) {
         });
     } catch (error) {
         console.error('Role creation error:', error);
-        // Refund
         await updateBalance(userId, ROLE_PRICE);
         return { success: false, message: 'Failed to create role. Coins refunded.' };
     }
@@ -84,7 +83,6 @@ async function createCustomRole(interaction, name, iconAttachment) {
         }
     );
 
-    // Add owner to role
     await interaction.member.roles.add(role);
     db.run('INSERT INTO role_members (roleId, userId, addedBy, addedDate) VALUES (?, ?, ?, ?)',
         [role.id, userId, userId, now]);
@@ -92,7 +90,6 @@ async function createCustomRole(interaction, name, iconAttachment) {
     return { success: true, role: role, message: `Role ${role.name} created!` };
 }
 
-// Add member to role (cost 500)
 async function addMemberToRole(interaction, roleId, targetUser) {
     const ownerId = interaction.user.id;
     const roleData = await getRoleOwner(roleId);
@@ -101,7 +98,7 @@ async function addMemberToRole(interaction, roleId, targetUser) {
     }
 
     const memberCount = await getRoleMemberCount(roleId);
-    if (memberCount >= 11) { // owner + 10 members
+    if (memberCount >= 11) {
         return { success: false, message: 'Role already has maximum 10 members (excluding owner).' };
     }
 
@@ -123,7 +120,6 @@ async function addMemberToRole(interaction, roleId, targetUser) {
     return { success: true, message: `Added ${targetUser.tag} to role.` };
 }
 
-// Remove member (free)
 async function removeMemberFromRole(interaction, roleId, targetUser) {
     const ownerId = interaction.user.id;
     const roleData = await getRoleOwner(roleId);
@@ -140,7 +136,6 @@ async function removeMemberFromRole(interaction, roleId, targetUser) {
     return { success: true, message: `Removed ${targetUser.tag} from role.` };
 }
 
-// Edit role name/icon
 async function editRole(interaction, roleId, newName, newIconAttachment) {
     const ownerId = interaction.user.id;
     const roleData = await getRoleOwner(roleId);
@@ -158,7 +153,6 @@ async function editRole(interaction, roleId, newName, newIconAttachment) {
     }
 }
 
-// Extend role (cost same as purchase)
 async function extendRole(roleId, ownerId) {
     const balance = await getBalance(ownerId);
     if (balance < ROLE_PRICE) {
@@ -171,7 +165,6 @@ async function extendRole(roleId, ownerId) {
     return { success: true, message: `Role extended for ${ROLE_DURATION_DAYS} days.` };
 }
 
-// Helper: get role owner
 function getRoleOwner(roleId) {
     return new Promise((resolve, reject) => {
         db.get('SELECT ownerId FROM purchased_roles WHERE roleId = ?', [roleId], (err, row) => {
@@ -181,7 +174,6 @@ function getRoleOwner(roleId) {
     });
 }
 
-// Helper: get member count (including owner)
 function getRoleMemberCount(roleId) {
     return new Promise((resolve, reject) => {
         db.get('SELECT COUNT(*) as count FROM role_members WHERE roleId = ?', [roleId], (err, row) => {
@@ -191,16 +183,14 @@ function getRoleMemberCount(roleId) {
     });
 }
 
-// Expiration checker (run daily)
 async function checkExpiredRoles(client, logChannelId) {
     const now = Date.now();
-    const expirationWarningTime = 24 * 60 * 60 * 1000; // 24h
+    const expirationWarningTime = 24 * 60 * 60 * 1000;
     db.all('SELECT roleId, ownerId, expirationDate FROM purchased_roles', async (err, rows) => {
         if (err) return console.error(err);
         for (const row of rows) {
             const timeLeft = row.expirationDate - now;
             if (timeLeft <= 0) {
-                // Delete role
                 let role = null;
                 for (const guild of client.guilds.cache.values()) {
                     role = guild.roles.cache.get(row.roleId);
@@ -218,7 +208,6 @@ async function checkExpiredRoles(client, logChannelId) {
                     if (logChannel) logChannel.send(`Expired role <@&${row.roleId}> owned by <@${row.ownerId}> has been deleted.`);
                 }
             } else if (timeLeft <= expirationWarningTime && timeLeft > 0) {
-                // Send warning (once per expiration period; we send each check, but that's okay)
                 const owner = await client.users.fetch(row.ownerId).catch(() => null);
                 if (owner) {
                     const buttonRow = new ActionRowBuilder()
