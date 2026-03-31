@@ -4,9 +4,7 @@ const db = require('./database.js');
 const ROLE_PRICE = 60000;
 const ADD_MEMBER_PRICE = 1000;
 const ROLE_DURATION_DAYS = 30;
-const TARGET_CATEGORY_ID = '1446128863200542933'; // Category ID for roles (optional)
 
-// Helper: get balance
 function getBalance(userId) {
     return new Promise((resolve, reject) => {
         db.get('SELECT balance FROM users WHERE userId = ?', [userId], (err, row) => {
@@ -16,11 +14,13 @@ function getBalance(userId) {
     });
 }
 
-// Helper: update balance
 function updateBalance(userId, amount) {
     return new Promise((resolve, reject) => {
         db.run(
-            'INSERT INTO users (userId, balance) VALUES (?, ?) ON CONFLICT(userId) DO UPDATE SET balance = balance + ?',
+            `INSERT INTO users (userId, balance) 
+             VALUES (?, ?) 
+             ON CONFLICT(userId) DO UPDATE SET 
+             balance = balance + ?`,
             [userId, amount, amount],
             (err) => {
                 if (err) reject(err);
@@ -30,7 +30,6 @@ function updateBalance(userId, amount) {
     });
 }
 
-// Purchase role (just returns success, modal will handle)
 async function purchaseRole(interaction) {
     const userId = interaction.user.id;
     const balance = await getBalance(userId);
@@ -40,7 +39,6 @@ async function purchaseRole(interaction) {
     return { success: true, requiresModal: true };
 }
 
-// Create role after modal submission
 async function createCustomRole(interaction, name, iconAttachment, colorHex, isAdmin = false) {
     const userId = interaction.user.id;
     const guild = interaction.guild;
@@ -54,11 +52,13 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         await updateBalance(userId, -ROLE_PRICE);
     }
 
-    // Convert color hex to number
-    let roleColor = 0x00ff00; // default green
-    if (colorHex && colorHex.trim() !== '') {
-        roleColor = parseInt(colorHex.replace('#', ''), 16);
-        if (isNaN(roleColor)) roleColor = 0x00ff00;
+    // Convert hex to integer
+    let roleColor = 0x00ff00;
+    if (colorHex) {
+        const hexRegex = /^#([0-9A-Fa-f]{6})$/;
+        if (hexRegex.test(colorHex)) {
+            roleColor = parseInt(colorHex.replace('#', ''), 16);
+        }
     }
 
     let role;
@@ -75,22 +75,16 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         return { success: false, message: 'Failed to create role. Coins refunded.' };
     }
 
-    // Attempt to position role under the specified category (if it exists)
-    if (TARGET_CATEGORY_ID) {
-        try {
-            // Fetch the category role (if it's a role) – but categories are channels, not roles.
-            // The user likely meant a specific role under which to place the new role.
-            // To place under a role, we need its position. We'll attempt to find a role with that ID.
-            const targetRole = guild.roles.cache.get(TARGET_CATEGORY_ID);
-            if (targetRole) {
-                // Move this role just below the target role (targetRole.position + 1)
-                await role.setPosition(targetRole.position + 1);
-            } else {
-                console.log(`Target role ${TARGET_CATEGORY_ID} not found, skipping position adjustment.`);
-            }
-        } catch (posError) {
-            console.error('Failed to set role position:', posError);
-        }
+    // Move role to position 2 (adjust as needed)
+    try {
+        // Get the role to place it under (target role ID)
+        const targetRoleId = '1446128863200542933'; // The "Casino roles" category (but categories are for channels, not roles)
+        // Since the user wants it "under by 2", we'll just set a high position (e.g., 5) so it appears above most roles.
+        // Alternatively, we can place it directly below a specific role.
+        // For now, we'll set position to 2 (higher number = lower in list)
+        await role.setPosition(2);
+    } catch (err) {
+        console.warn('Could not set role position:', err.message);
     }
 
     const now = Date.now();
@@ -115,7 +109,6 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
     return { success: true, role: role, message: `Role ${role.name} created!` };
 }
 
-// Add member to role (cost 500)
 async function addMemberToRole(interaction, roleId, targetUser) {
     const ownerId = interaction.user.id;
     const roleData = await getRoleOwner(roleId);
@@ -149,7 +142,6 @@ async function addMemberToRole(interaction, roleId, targetUser) {
     return { success: true, message: `Added ${targetUser.tag} to role.` };
 }
 
-// Remove member from role (free)
 async function removeMemberFromRole(interaction, roleId, targetUser) {
     const ownerId = interaction.user.id;
     const roleData = await getRoleOwner(roleId);
@@ -168,7 +160,6 @@ async function removeMemberFromRole(interaction, roleId, targetUser) {
     return { success: true, message: `Removed ${targetUser.tag} from role.` };
 }
 
-// Edit role name, icon, color
 async function editRole(interaction, roleId, newName, newIconAttachment, newColorHex) {
     const ownerId = interaction.user.id;
     const roleData = await getRoleOwner(roleId);
@@ -199,7 +190,6 @@ async function editRole(interaction, roleId, newName, newIconAttachment, newColo
     }
 }
 
-// Extend role (cost same as purchase)
 async function extendRole(roleId, ownerId) {
     const balance = await getBalance(ownerId);
     if (balance < ROLE_PRICE) {
@@ -212,7 +202,6 @@ async function extendRole(roleId, ownerId) {
     return { success: true, message: `Role extended for ${ROLE_DURATION_DAYS} days.` };
 }
 
-// Helper: get role owner
 function getRoleOwner(roleId) {
     return new Promise((resolve, reject) => {
         db.get('SELECT ownerId FROM purchased_roles WHERE roleId = ?', [roleId], (err, row) => {
@@ -222,7 +211,6 @@ function getRoleOwner(roleId) {
     });
 }
 
-// Helper: get member count (including owner)
 function getRoleMemberCount(roleId) {
     return new Promise((resolve, reject) => {
         db.get('SELECT COUNT(*) as count FROM role_members WHERE roleId = ?', [roleId], (err, row) => {
@@ -232,10 +220,9 @@ function getRoleMemberCount(roleId) {
     });
 }
 
-// Expiration checker (run daily)
 async function checkExpiredRoles(client, logChannelId) {
     const now = Date.now();
-    const expirationWarningTime = 24 * 60 * 60 * 1000; // 24h
+    const expirationWarningTime = 24 * 60 * 60 * 1000;
     db.all('SELECT roleId, ownerId, expirationDate FROM purchased_roles', async (err, rows) => {
         if (err) return console.error(err);
         for (const row of rows) {
