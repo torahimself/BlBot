@@ -9,7 +9,7 @@ const MODAL_COMMANDS = ['buyrole', 'editrole'];
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
-        // Slash commands
+        // ---------- SLASH COMMANDS ----------
         if (interaction.isChatInputCommand()) {
             if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                 try {
@@ -43,14 +43,14 @@ module.exports = {
             return;
         }
 
-        // Trade flow: button "Accept" -> modal for offer -> show confirm buttons
+        // ---------- BUTTONS ----------
         if (interaction.isButton()) {
-            // Trade accept / decline
+            // Trade: Accept button
             if (interaction.customId.startsWith('trade_accept_')) {
                 const initiatorId = interaction.customId.split('_')[2];
-                // Check if a trade exists with this initiator
+                // Find the trade with this initiator and target = current user
                 let trade = null;
-                for (const t of Array.from(activeTrades.values())) {
+                for (const t of Array.from(global.activeTrades?.values() || [])) {
                     if (t.initiatorId === initiatorId && t.targetId === interaction.user.id && !t.targetOffer) {
                         trade = t;
                         break;
@@ -77,10 +77,11 @@ module.exports = {
                 return;
             }
 
+            // Trade: Decline button
             if (interaction.customId.startsWith('trade_decline_')) {
                 const initiatorId = interaction.customId.split('_')[2];
                 let trade = null;
-                for (const t of Array.from(activeTrades.values())) {
+                for (const t of Array.from(global.activeTrades?.values() || [])) {
                     if (t.initiatorId === initiatorId && t.targetId === interaction.user.id) {
                         trade = t;
                         break;
@@ -95,7 +96,7 @@ module.exports = {
                 return;
             }
 
-            // Confirm buttons after both offers are set
+            // Trade: Confirm button
             if (interaction.customId.startsWith('trade_confirm_')) {
                 const tradeId = interaction.customId.split('_')[2];
                 const trade = getTrade(tradeId);
@@ -128,7 +129,7 @@ module.exports = {
             }
         }
 
-        // Modals
+        // ---------- MODALS ----------
         if (interaction.isModalSubmit()) {
             // Trade offer modal
             if (interaction.customId.startsWith('trade_offer_')) {
@@ -157,7 +158,7 @@ module.exports = {
                     );
 
                 const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
-                const targetUser = interaction.client.users.fetch(trade.targetId);
+                const targetUser = await interaction.client.users.fetch(trade.targetId);
                 const tradeSummary = `**Trade Summary**\n${initiatorUser.tag} offers: ${trade.initiatorOffer}\n${targetUser.tag} offers: ${trade.targetOffer}\n\nClick Confirm to finalize.`;
                 await initiatorUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
                 await targetUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
@@ -166,19 +167,14 @@ module.exports = {
                 return;
             }
 
-            // Existing buyrole / editrole modals
+            // Buy role modal
             if (interaction.customId === 'buyRoleModal') {
                 const roleName = interaction.fields.getTextInputValue('roleName');
                 const iconUrl = interaction.fields.getTextInputValue('roleIcon');
                 let attachment = null;
                 if (iconUrl && iconUrl.trim() !== '') attachment = { url: iconUrl };
-                const userId = interaction.user.id;
-                const balance = await getBalance(userId);
-                if (balance < ROLE_PRICE) {
-                    await interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, ephemeral: true });
-                    return;
-                }
-                const result = await createCustomRole(interaction, roleName, attachment);
+                const isAdmin = interaction.member.permissions.has('Administrator');
+                const result = await createCustomRole(interaction, roleName, attachment, isAdmin);
                 if (result.success) {
                     await interaction.reply({ content: `✅ Role ${result.role.name} created!`, ephemeral: true });
                 } else {
@@ -186,6 +182,8 @@ module.exports = {
                 }
                 return;
             }
+
+            // Edit role modal
             if (interaction.customId.startsWith('editRoleModal_')) {
                 const roleId = interaction.customId.split('_')[1];
                 const newName = interaction.fields.getTextInputValue('newName');
