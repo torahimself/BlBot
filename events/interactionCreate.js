@@ -1,23 +1,25 @@
 const commandHandler = require('../handlers/commandHandler');
 const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE } = require('../utils/economy/shopManager.js');
-const db = require('../utils/economy/database.js');
 
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
         // Slash commands
         if (interaction.isChatInputCommand()) {
+            // Always defer reply immediately to avoid timeout
             try {
                 await interaction.deferReply();
             } catch (error) {
                 console.error('Error deferring reply:', error);
                 return;
             }
+
             const command = commandHandler.commands.get(interaction.commandName);
             if (!command) {
                 await interaction.editReply('❌ Command not found!');
                 return;
             }
+
             try {
                 await command.execute(interaction);
             } catch (error) {
