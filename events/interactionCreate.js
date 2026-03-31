@@ -3,7 +3,6 @@ const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBa
 const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
-// Commands that show a modal should NOT be deferred
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 
 module.exports = {
@@ -45,7 +44,6 @@ module.exports = {
 
         // ---------- BUTTONS ----------
         if (interaction.isButton()) {
-            // Trade: Accept button
             if (interaction.customId.startsWith('trade_accept_')) {
                 const initiatorId = interaction.customId.split('_')[2];
                 let trade = null;
@@ -75,7 +73,6 @@ module.exports = {
                 return;
             }
 
-            // Trade: Decline button
             if (interaction.customId.startsWith('trade_decline_')) {
                 const initiatorId = interaction.customId.split('_')[2];
                 let trade = null;
@@ -94,7 +91,6 @@ module.exports = {
                 return;
             }
 
-            // Trade: Confirm button
             if (interaction.customId.startsWith('trade_confirm_')) {
                 const tradeId = interaction.customId.split('_')[2];
                 const trade = getTrade(tradeId);
@@ -204,7 +200,6 @@ module.exports = {
                 const newName = interaction.fields.getTextInputValue('newName');
                 const newIcon = interaction.fields.getTextInputValue('newIcon');
                 const newColor = interaction.fields.getTextInputValue('newColor');
-
                 let attachment = null;
                 if (newIcon && newIcon.trim() !== '') {
                     if (!newIcon.toLowerCase().endsWith('.png')) {
@@ -213,7 +208,6 @@ module.exports = {
                     }
                     attachment = { url: newIcon };
                 }
-
                 let colorHex = null;
                 if (newColor && newColor.trim() !== '') {
                     const hexRegex = /^#([0-9A-Fa-f]{6})$/;
@@ -223,7 +217,6 @@ module.exports = {
                     }
                     colorHex = newColor;
                 }
-
                 const result = await editRole(interaction, roleId, newName || null, attachment, colorHex);
                 await interaction.reply({ content: result.message, ephemeral: true });
                 return;
