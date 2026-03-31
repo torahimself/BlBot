@@ -48,7 +48,6 @@ module.exports = {
             // Trade: Accept button
             if (interaction.customId.startsWith('trade_accept_')) {
                 const initiatorId = interaction.customId.split('_')[2];
-                // Find the trade with this initiator and target = current user
                 let trade = null;
                 for (const t of activeTrades.values()) {
                     if (t.initiatorId === initiatorId && t.targetId === interaction.user.id && !t.targetOffer) {
@@ -59,7 +58,6 @@ module.exports = {
                 if (!trade) {
                     return interaction.reply({ content: '❌ This trade request is no longer valid.', ephemeral: true });
                 }
-                // Show modal for target to enter their offer
                 const modal = new ModalBuilder()
                     .setCustomId(`trade_offer_${trade.id}`)
                     .setTitle('Trade Offer')
@@ -110,7 +108,6 @@ module.exports = {
 
                 const confirmed = trade.confirm(userId);
                 if (confirmed) {
-                    // Execute trade: transfer coins
                     await updateBalance(trade.initiatorId, -trade.initiatorOffer);
                     await updateBalance(trade.targetId, trade.initiatorOffer);
                     await updateBalance(trade.targetId, -trade.targetOffer);
@@ -148,7 +145,6 @@ module.exports = {
                 }
                 trade.setTargetOffer(targetOffer);
 
-                // Send confirm buttons to both users
                 const confirmRow = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
@@ -170,11 +166,30 @@ module.exports = {
             // Buy role modal
             if (interaction.customId === 'buyRoleModal') {
                 const roleName = interaction.fields.getTextInputValue('roleName');
-                const iconUrl = interaction.fields.getTextInputValue('roleIcon');
+                let iconUrl = interaction.fields.getTextInputValue('roleIcon');
+                let colorHex = interaction.fields.getTextInputValue('roleColor');
+
                 let attachment = null;
-                if (iconUrl && iconUrl.trim() !== '') attachment = { url: iconUrl };
+                if (iconUrl && iconUrl.trim() !== '') {
+                    if (!iconUrl.toLowerCase().endsWith('.png')) {
+                        await interaction.reply({ content: '❌ Icon URL must end with .png', ephemeral: true });
+                        return;
+                    }
+                    attachment = { url: iconUrl };
+                }
+
+                if (colorHex && colorHex.trim() !== '') {
+                    const hexRegex = /^#([0-9A-Fa-f]{6})$/;
+                    if (!hexRegex.test(colorHex)) {
+                        await interaction.reply({ content: '❌ Invalid color format. Use #RRGGBB (e.g., #FF0000).', ephemeral: true });
+                        return;
+                    }
+                } else {
+                    colorHex = '#00FF00';
+                }
+
                 const isAdmin = interaction.member.permissions.has('Administrator');
-                const result = await createCustomRole(interaction, roleName, attachment, isAdmin);
+                const result = await createCustomRole(interaction, roleName, attachment, colorHex, isAdmin);
                 if (result.success) {
                     await interaction.reply({ content: `✅ Role ${result.role.name} created!`, ephemeral: true });
                 } else {
@@ -188,9 +203,28 @@ module.exports = {
                 const roleId = interaction.customId.split('_')[1];
                 const newName = interaction.fields.getTextInputValue('newName');
                 const newIcon = interaction.fields.getTextInputValue('newIcon');
+                const newColor = interaction.fields.getTextInputValue('newColor');
+
                 let attachment = null;
-                if (newIcon && newIcon.trim() !== '') attachment = { url: newIcon };
-                const result = await editRole(interaction, roleId, newName || null, attachment);
+                if (newIcon && newIcon.trim() !== '') {
+                    if (!newIcon.toLowerCase().endsWith('.png')) {
+                        await interaction.reply({ content: '❌ Icon URL must end with .png', ephemeral: true });
+                        return;
+                    }
+                    attachment = { url: newIcon };
+                }
+
+                let colorHex = null;
+                if (newColor && newColor.trim() !== '') {
+                    const hexRegex = /^#([0-9A-Fa-f]{6})$/;
+                    if (!hexRegex.test(newColor)) {
+                        await interaction.reply({ content: '❌ Invalid color format. Use #RRGGBB.', ephemeral: true });
+                        return;
+                    }
+                    colorHex = newColor;
+                }
+
+                const result = await editRole(interaction, roleId, newName || null, attachment, colorHex);
                 await interaction.reply({ content: result.message, ephemeral: true });
                 return;
             }
