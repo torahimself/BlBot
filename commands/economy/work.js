@@ -37,7 +37,7 @@ module.exports = {
         if (!isAdmin && timeLeft > 0) {
             const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
             const minutesLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-            return interaction.editReply(`⏰ You can work again in **${hoursLeft}h ${minutesLeft}m**. Administrators have no cooldown.`);
+            return interaction.editReply(`⏰ You can work again in **${hoursLeft}h ${minutesLeft}m**.`);
         }
 
         const reward = Math.floor(Math.random() * (1000 - 250 + 1)) + 250;
@@ -62,6 +62,6 @@ module.exports = {
             );
         });
 
-        await interaction.editReply(`💼 You worked hard and earned **${reward}** coins! ${isAdmin ? '(Admin: no cooldown applied)' : 'Come back tomorrow for more.'}`);
+        await interaction.editReply(`💼 You worked hard and earned **${reward}** coins! ${isAdmin ? '' : 'Come back tomorrow for more.'}`);
     }
 };
