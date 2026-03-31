@@ -6,7 +6,7 @@ const allowedChannels = ['1415933682748751923', '1464140979148689550'];
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('addmember')
-        .setDescription('Add a member to your custom role (cost 500 coins)')
+        .setDescription('Add a member to your custom role (cost 1000 coins)')
         .addUserOption(option => option.setName('user').setDescription('User to add').setRequired(true)),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
