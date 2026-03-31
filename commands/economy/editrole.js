@@ -8,12 +8,12 @@ module.exports = {
         .setDescription('Edit your custom role name or icon'),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
-            return interaction.editReply(`❌ This command can only be used in <#1415933682748751923> or <#1464140979148689550>.`);
+            return interaction.reply({ content: `❌ This command can only be used in <#1415933682748751923> or <#1464140979148689550>.`, ephemeral: true });
         }
         const userId = interaction.user.id;
         db.get('SELECT roleId FROM purchased_roles WHERE ownerId = ?', [userId], async (err, row) => {
             if (err || !row) {
-                return interaction.editReply('You do not own any custom role.');
+                return interaction.reply({ content: 'You do not own any custom role.', ephemeral: true });
             }
             const modal = new ModalBuilder()
                 .setCustomId(`editRoleModal_${row.roleId}`)
