@@ -18,13 +18,8 @@ class Trade {
     cancel(reason) {
         clearTimeout(this.timeout);
         activeTrades.delete(this.id);
-        // Notify users via DM
-        const notify = (userId) => {
-            const user = client?.users?.cache?.get(userId);
-            if (user) user.send(`Trade cancelled: ${reason}`).catch(console.error);
-        };
-        notify(this.initiatorId);
-        notify(this.targetId);
+        // Notify users via DM (requires client reference, we'll pass client in the callback)
+        // This is handled in the trade command when we call cancelTrade.
     }
 
     setTargetOffer(offer) {
@@ -59,4 +54,4 @@ function cancelTrade(tradeId, reason) {
     if (trade) trade.cancel(reason);
 }
 
-module.exports = { createTrade, getTrade, cancelTrade };
+module.exports = { activeTrades, createTrade, getTrade, cancelTrade };
