@@ -1,22 +1,32 @@
 const commandHandler = require('../handlers/commandHandler');
 const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE } = require('../utils/economy/shopManager.js');
 
+// Commands that show a modal should NOT be deferred
+const MODAL_COMMANDS = ['buyrole', 'editrole'];
+
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
         // Slash commands
         if (interaction.isChatInputCommand()) {
-            // Always defer reply immediately to avoid timeout
-            try {
-                await interaction.deferReply();
-            } catch (error) {
-                console.error('Error deferring reply:', error);
-                return;
+            // Only defer if the command does NOT show a modal
+            if (!MODAL_COMMANDS.includes(interaction.commandName)) {
+                try {
+                    await interaction.deferReply();
+                } catch (error) {
+                    console.error('Error deferring reply:', error);
+                    return;
+                }
             }
 
             const command = commandHandler.commands.get(interaction.commandName);
             if (!command) {
-                await interaction.editReply('❌ Command not found!');
+                // If we deferred, use editReply; otherwise use reply
+                if (!MODAL_COMMANDS.includes(interaction.commandName)) {
+                    await interaction.editReply('❌ Command not found!');
+                } else {
+                    await interaction.reply({ content: '❌ Command not found!', ephemeral: true });
+                }
                 return;
             }
 
@@ -24,7 +34,11 @@ module.exports = {
                 await command.execute(interaction);
             } catch (error) {
                 console.error(`Error executing command ${interaction.commandName}:`, error);
-                await interaction.editReply('❌ There was an error executing this command!');
+                if (!MODAL_COMMANDS.includes(interaction.commandName)) {
+                    await interaction.editReply('❌ There was an error executing this command!');
+                } else {
+                    await interaction.reply({ content: '❌ There was an error executing this command!', ephemeral: true });
+                }
             }
             return;
         }
