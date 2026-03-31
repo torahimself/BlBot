@@ -43,16 +43,18 @@ async function purchaseRole(interaction) {
     return { success: true, requiresModal: true };
 }
 
-async function createCustomRole(interaction, name, iconAttachment) {
+async function createCustomRole(interaction, name, iconAttachment, isAdmin = false) {
     const userId = interaction.user.id;
     const guild = interaction.guild;
     if (!guild) return { success: false, message: 'Guild not found' };
 
-    const balance = await getBalance(userId);
-    if (balance < ROLE_PRICE) {
-        return { success: false, message: `You no longer have enough coins. Need ${ROLE_PRICE}.` };
+    if (!isAdmin) {
+        const balance = await getBalance(userId);
+        if (balance < ROLE_PRICE) {
+            return { success: false, message: `You need ${ROLE_PRICE} coins. You have ${balance}.` };
+        }
+        await updateBalance(userId, -ROLE_PRICE);
     }
-    await updateBalance(userId, -ROLE_PRICE);
 
     let role;
     try {
