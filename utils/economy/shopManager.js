@@ -52,7 +52,6 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         await updateBalance(userId, -ROLE_PRICE);
     }
 
-    // Convert hex to integer
     let roleColor = 0x00ff00;
     if (colorHex) {
         const hexRegex = /^#([0-9A-Fa-f]{6})$/;
@@ -75,16 +74,23 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         return { success: false, message: 'Failed to create role. Coins refunded.' };
     }
 
-    // Move role to position 2 (adjust as needed)
-    try {
-        // Get the role to place it under (target role ID)
-        const targetRoleId = '1446128863200542933'; // The "Casino roles" category (but categories are for channels, not roles)
-        // Since the user wants it "under by 2", we'll just set a high position (e.g., 5) so it appears above most roles.
-        // Alternatively, we can place it directly below a specific role.
-        // For now, we'll set position to 2 (higher number = lower in list)
-        await role.setPosition(2);
-    } catch (err) {
-        console.warn('Could not set role position:', err.message);
+    // Position the role just below the specified target role (if exists)
+    const targetRoleId = '1446128863200542933'; // Role that should be above this one
+    const targetRole = guild.roles.cache.get(targetRoleId);
+    if (targetRole) {
+        const targetPosition = targetRole.position;
+        try {
+            await role.setPosition(targetPosition + 1);
+        } catch (err) {
+            console.warn('Could not set role position:', err.message);
+        }
+    } else {
+        // Fallback: set to a low position (e.g., 2)
+        try {
+            await role.setPosition(2);
+        } catch (err) {
+            console.warn('Could not set role position:', err.message);
+        }
     }
 
     const now = Date.now();
@@ -121,12 +127,20 @@ async function addMemberToRole(interaction, roleId, targetUser) {
         return { success: false, message: 'Role not found. It may have been deleted.' };
     }
 
+    // Fetch the GuildMember for the target user
+    let targetMember;
+    try {
+        targetMember = await interaction.guild.members.fetch(targetUser.id);
+    } catch (error) {
+        return { success: false, message: 'User not found in this server.' };
+    }
+
     const memberCount = await getRoleMemberCount(roleId);
     if (memberCount >= 11) {
         return { success: false, message: 'Role already has maximum 10 members (excluding owner).' };
     }
 
-    if (role.members.has(targetUser.id)) {
+    if (targetMember.roles.cache.has(roleId)) {
         return { success: false, message: 'User already has this role.' };
     }
 
@@ -136,7 +150,7 @@ async function addMemberToRole(interaction, roleId, targetUser) {
     }
 
     await updateBalance(ownerId, -ADD_MEMBER_PRICE);
-    await targetUser.roles.add(role);
+    await targetMember.roles.add(role);
     db.run('INSERT INTO role_members (roleId, userId, addedBy, addedDate) VALUES (?, ?, ?, ?)',
         [roleId, targetUser.id, ownerId, Date.now()]);
     return { success: true, message: `Added ${targetUser.tag} to role.` };
@@ -152,10 +166,20 @@ async function removeMemberFromRole(interaction, roleId, targetUser) {
     if (!role) {
         return { success: false, message: 'Role not found. It may have been deleted.' };
     }
-    if (!role.members.has(targetUser.id)) {
+
+    // Fetch the GuildMember for the target user
+    let targetMember;
+    try {
+        targetMember = await interaction.guild.members.fetch(targetUser.id);
+    } catch (error) {
+        return { success: false, message: 'User not found in this server.' };
+    }
+
+    if (!targetMember.roles.cache.has(roleId)) {
         return { success: false, message: 'User does not have this role.' };
     }
-    await targetUser.roles.remove(role);
+
+    await targetMember.roles.remove(role);
     db.run('DELETE FROM role_members WHERE roleId = ? AND userId = ?', [roleId, targetUser.id]);
     return { success: true, message: `Removed ${targetUser.tag} from role.` };
 }
