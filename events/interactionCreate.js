@@ -1,6 +1,6 @@
 const commandHandler = require('../handlers/commandHandler');
 const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBalance } = require('../utils/economy/shopManager.js');
-const { createTrade, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
+const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
 // Commands that show a modal should NOT be deferred
@@ -50,7 +50,7 @@ module.exports = {
                 const initiatorId = interaction.customId.split('_')[2];
                 // Find the trade with this initiator and target = current user
                 let trade = null;
-                for (const t of Array.from(global.activeTrades?.values() || [])) {
+                for (const t of activeTrades.values()) {
                     if (t.initiatorId === initiatorId && t.targetId === interaction.user.id && !t.targetOffer) {
                         trade = t;
                         break;
@@ -81,7 +81,7 @@ module.exports = {
             if (interaction.customId.startsWith('trade_decline_')) {
                 const initiatorId = interaction.customId.split('_')[2];
                 let trade = null;
-                for (const t of Array.from(global.activeTrades?.values() || [])) {
+                for (const t of activeTrades.values()) {
                     if (t.initiatorId === initiatorId && t.targetId === interaction.user.id) {
                         trade = t;
                         break;
