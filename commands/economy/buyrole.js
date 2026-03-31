@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { purchaseRole, getBalance, ROLE_PRICE } = require('../../utils/economy/shopManager.js');
-const allowedChannels = ['1464140979148689550']; // only shop channel
+const allowedChannels = ['1464140979148689550'];
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -8,14 +8,13 @@ module.exports = {
         .setDescription('Purchase a custom role (12000 coins)'),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
-            return interaction.editReply(`❌ This command can only be used in <#1464140979148689550>.`);
+            return interaction.reply({ content: `❌ This command can only be used in <#1464140979148689550>.`, ephemeral: true });
         }
         const userId = interaction.user.id;
         const balance = await getBalance(userId);
         if (balance < ROLE_PRICE) {
-            return interaction.editReply(`❌ You need ${ROLE_PRICE} coins. You have ${balance}.`);
+            return interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, ephemeral: true });
         }
-        // Show modal to get name and icon
         const modal = new ModalBuilder()
             .setCustomId('buyRoleModal')
             .setTitle('Create Custom Role');
