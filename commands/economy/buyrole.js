@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const { purchaseRole, getBalance, ROLE_PRICE, createCustomRole } = require('../../utils/economy/shopManager.js');
+const { getBalance, ROLE_PRICE } = require('../../utils/economy/shopManager.js');
 const allowedChannels = ['1464140979148689550'];
 
 module.exports = {
@@ -19,25 +19,36 @@ module.exports = {
             return interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, ephemeral: true });
         }
 
-        // Show modal
         const modal = new ModalBuilder()
             .setCustomId('buyRoleModal')
             .setTitle('Create Custom Role');
+
         const nameInput = new TextInputBuilder()
             .setCustomId('roleName')
             .setLabel('Role Name')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
             .setMaxLength(100);
+
         const iconInput = new TextInputBuilder()
             .setCustomId('roleIcon')
-            .setLabel('Icon URL (optional)')
+            .setLabel('Icon URL (optional, must end with .png)')
             .setStyle(TextInputStyle.Short)
             .setRequired(false);
+
+        const colorInput = new TextInputBuilder()
+            .setCustomId('roleColor')
+            .setLabel('Color (hex code, e.g., #FF0000)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setPlaceholder('#00FF00');
+
         modal.addComponents(
             new ActionRowBuilder().addComponents(nameInput),
-            new ActionRowBuilder().addComponents(iconInput)
+            new ActionRowBuilder().addComponents(iconInput),
+            new ActionRowBuilder().addComponents(colorInput)
         );
+
         await interaction.showModal(modal);
     }
 };
