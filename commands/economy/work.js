@@ -17,7 +17,6 @@ module.exports = {
         const isAdmin = interaction.member.permissions.has('Administrator');
         const now = Date.now();
 
-        // Get current lastWorkTime
         const row = await new Promise((resolve) => {
             db.get('SELECT lastWorkTime FROM users WHERE userId = ?', [userId], (err, row) => {
                 if (err) {
@@ -43,7 +42,6 @@ module.exports = {
 
         const reward = Math.floor(Math.random() * (1000 - 250 + 1)) + 250;
 
-        // Atomic update: add reward and set lastWorkTime
         await new Promise((resolve, reject) => {
             db.run(
                 `INSERT INTO users (userId, balance, lastWorkTime) 
