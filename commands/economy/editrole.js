@@ -5,7 +5,7 @@ const allowedChannels = ['1415933682748751923', '1464140979148689550'];
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('editrole')
-        .setDescription('Edit your custom role name or icon'),
+        .setDescription('Edit your custom role name, icon, or color'),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
             return interaction.reply({ content: `❌ This command can only be used in <#1415933682748751923> or <#1464140979148689550>.`, ephemeral: true });
@@ -25,12 +25,18 @@ module.exports = {
                 .setRequired(false);
             const iconInput = new TextInputBuilder()
                 .setCustomId('newIcon')
-                .setLabel('New Icon URL (leave blank)')
+                .setLabel('New Icon URL (must be .png)')
+                .setStyle(TextInputStyle.Short)
+                .setRequired(false);
+            const colorInput = new TextInputBuilder()
+                .setCustomId('newColor')
+                .setLabel('New Color (#RRGGBB, leave blank to keep)')
                 .setStyle(TextInputStyle.Short)
                 .setRequired(false);
             modal.addComponents(
                 new ActionRowBuilder().addComponents(nameInput),
-                new ActionRowBuilder().addComponents(iconInput)
+                new ActionRowBuilder().addComponents(iconInput),
+                new ActionRowBuilder().addComponents(colorInput)
             );
             await interaction.showModal(modal);
         });
