@@ -132,7 +132,9 @@ async function removeMemberFromRole(interaction, roleId, targetUser) {
         return { success: false, message: 'You do not own this role.' };
     }
     const role = interaction.guild.roles.cache.get(roleId);
-    if (!role) return { success: false, message: 'Role not found.' };
+    if (!role) {
+        return { success: false, message: 'Role not found. It may have been deleted.' };
+    }
     if (!role.members.has(targetUser.id)) {
         return { success: false, message: 'User does not have this role.' };
     }
