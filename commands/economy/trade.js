@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { createTrade, getTrade, cancelTrade } = require('../../utils/economy/tradeManager.js');
-const { getBalance, updateBalance } = require('../../utils/economy/shopManager.js');
+const { activeTrades, createTrade, cancelTrade } = require('../../utils/economy/tradeManager.js');
+const { getBalance } = require('../../utils/economy/shopManager.js');
 const allowedChannels = ['1415933682748751923', '1464140979148689550'];
 
 module.exports = {
@@ -28,7 +28,7 @@ module.exports = {
 
         // Check if either user is already in a trade
         let activeTradeExists = false;
-        for (const trade of Array.from(activeTrades.values())) {
+        for (const trade of activeTrades.values()) {
             if (trade.initiatorId === initiator.id || trade.targetId === initiator.id ||
                 trade.initiatorId === target.id || trade.targetId === target.id) {
                 activeTradeExists = true;
