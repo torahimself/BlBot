@@ -1,8 +1,8 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('./database.js');
 
-const ROLE_PRICE = 12000;
-const ADD_MEMBER_PRICE = 500;
+const ROLE_PRICE = 60000;
+const ADD_MEMBER_PRICE = 1000;
 const ROLE_DURATION_DAYS = 30;
 
 function getBalance(userId) {
