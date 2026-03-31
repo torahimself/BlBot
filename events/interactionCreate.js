@@ -1,5 +1,7 @@
 const commandHandler = require('../handlers/commandHandler');
-const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE } = require('../utils/economy/shopManager.js');
+const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBalance } = require('../utils/economy/shopManager.js');
+const { createTrade, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
 // Commands that show a modal should NOT be deferred
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
@@ -9,7 +11,6 @@ module.exports = {
     async execute(interaction) {
         // Slash commands
         if (interaction.isChatInputCommand()) {
-            // Only defer if the command does NOT show a modal
             if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                 try {
                     await interaction.deferReply();
@@ -21,7 +22,6 @@ module.exports = {
 
             const command = commandHandler.commands.get(interaction.commandName);
             if (!command) {
-                // If we deferred, use editReply; otherwise use reply
                 if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                     await interaction.editReply('❌ Command not found!');
                 } else {
@@ -43,15 +43,135 @@ module.exports = {
             return;
         }
 
+        // Trade flow: button "Accept" -> modal for offer -> show confirm buttons
+        if (interaction.isButton()) {
+            // Trade accept / decline
+            if (interaction.customId.startsWith('trade_accept_')) {
+                const initiatorId = interaction.customId.split('_')[2];
+                // Check if a trade exists with this initiator
+                let trade = null;
+                for (const t of Array.from(activeTrades.values())) {
+                    if (t.initiatorId === initiatorId && t.targetId === interaction.user.id && !t.targetOffer) {
+                        trade = t;
+                        break;
+                    }
+                }
+                if (!trade) {
+                    return interaction.reply({ content: '❌ This trade request is no longer valid.', ephemeral: true });
+                }
+                // Show modal for target to enter their offer
+                const modal = new ModalBuilder()
+                    .setCustomId(`trade_offer_${trade.id}`)
+                    .setTitle('Trade Offer')
+                    .addComponents(
+                        new ActionRowBuilder().addComponents(
+                            new TextInputBuilder()
+                                .setCustomId('offer')
+                                .setLabel('How many coins do you offer?')
+                                .setStyle(TextInputStyle.Short)
+                                .setRequired(true)
+                                .setMinLength(1)
+                        )
+                    );
+                await interaction.showModal(modal);
+                return;
+            }
+
+            if (interaction.customId.startsWith('trade_decline_')) {
+                const initiatorId = interaction.customId.split('_')[2];
+                let trade = null;
+                for (const t of Array.from(activeTrades.values())) {
+                    if (t.initiatorId === initiatorId && t.targetId === interaction.user.id) {
+                        trade = t;
+                        break;
+                    }
+                }
+                if (trade) {
+                    cancelTrade(trade.id, `${interaction.user.tag} declined the trade.`);
+                    await interaction.reply({ content: '✅ You declined the trade.', ephemeral: true });
+                } else {
+                    await interaction.reply({ content: '❌ Trade no longer exists.', ephemeral: true });
+                }
+                return;
+            }
+
+            // Confirm buttons after both offers are set
+            if (interaction.customId.startsWith('trade_confirm_')) {
+                const tradeId = interaction.customId.split('_')[2];
+                const trade = getTrade(tradeId);
+                if (!trade) {
+                    return interaction.reply({ content: '❌ Trade no longer exists.', ephemeral: true });
+                }
+                const userId = interaction.user.id;
+                if (userId !== trade.initiatorId && userId !== trade.targetId) {
+                    return interaction.reply({ content: '❌ You are not part of this trade.', ephemeral: true });
+                }
+
+                const confirmed = trade.confirm(userId);
+                if (confirmed) {
+                    // Execute trade: transfer coins
+                    await updateBalance(trade.initiatorId, -trade.initiatorOffer);
+                    await updateBalance(trade.targetId, trade.initiatorOffer);
+                    await updateBalance(trade.targetId, -trade.targetOffer);
+                    await updateBalance(trade.initiatorId, trade.targetOffer);
+
+                    const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
+                    const targetUser = await interaction.client.users.fetch(trade.targetId);
+                    const successMsg = `✅ Trade completed!\n${initiatorUser.tag} gave ${trade.initiatorOffer} coins to ${targetUser.tag}\n${targetUser.tag} gave ${trade.targetOffer} coins to ${initiatorUser.tag}`;
+                    await initiatorUser.send(successMsg).catch(console.error);
+                    await targetUser.send(successMsg).catch(console.error);
+                    await interaction.reply({ content: successMsg, ephemeral: true });
+                } else {
+                    await interaction.reply({ content: '✅ You confirmed. Waiting for the other user...', ephemeral: true });
+                }
+                return;
+            }
+        }
+
         // Modals
         if (interaction.isModalSubmit()) {
+            // Trade offer modal
+            if (interaction.customId.startsWith('trade_offer_')) {
+                const tradeId = interaction.customId.split('_')[2];
+                const trade = getTrade(tradeId);
+                if (!trade) {
+                    return interaction.reply({ content: '❌ Trade no longer exists.', ephemeral: true });
+                }
+                const targetOffer = parseInt(interaction.fields.getTextInputValue('offer'), 10);
+                if (isNaN(targetOffer) || targetOffer < 0) {
+                    return interaction.reply({ content: '❌ Invalid amount. Please enter a positive number.', ephemeral: true });
+                }
+                const targetBalance = await getBalance(interaction.user.id);
+                if (targetOffer > targetBalance) {
+                    return interaction.reply({ content: `❌ You only have ${targetBalance} coins. Cannot offer ${targetOffer}.`, ephemeral: true });
+                }
+                trade.setTargetOffer(targetOffer);
+
+                // Send confirm buttons to both users
+                const confirmRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`trade_confirm_${trade.id}`)
+                            .setLabel('Confirm Trade')
+                            .setStyle(ButtonStyle.Success)
+                    );
+
+                const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
+                const targetUser = interaction.client.users.fetch(trade.targetId);
+                const tradeSummary = `**Trade Summary**\n${initiatorUser.tag} offers: ${trade.initiatorOffer}\n${targetUser.tag} offers: ${trade.targetOffer}\n\nClick Confirm to finalize.`;
+                await initiatorUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
+                await targetUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
+
+                await interaction.reply({ content: '✅ Your offer has been recorded. Both users must now click "Confirm Trade".', ephemeral: true });
+                return;
+            }
+
+            // Existing buyrole / editrole modals
             if (interaction.customId === 'buyRoleModal') {
                 const roleName = interaction.fields.getTextInputValue('roleName');
                 const iconUrl = interaction.fields.getTextInputValue('roleIcon');
                 let attachment = null;
-                if (iconUrl && iconUrl.trim() !== '') {
-                    attachment = { url: iconUrl };
-                }
+                if (iconUrl && iconUrl.trim() !== '') attachment = { url: iconUrl };
                 const userId = interaction.user.id;
                 const balance = await getBalance(userId);
                 if (balance < ROLE_PRICE) {
@@ -73,17 +193,6 @@ module.exports = {
                 let attachment = null;
                 if (newIcon && newIcon.trim() !== '') attachment = { url: newIcon };
                 const result = await editRole(interaction, roleId, newName || null, attachment);
-                await interaction.reply({ content: result.message, ephemeral: true });
-                return;
-            }
-        }
-
-        // Buttons (role extension)
-        if (interaction.isButton()) {
-            if (interaction.customId.startsWith('extend_role_')) {
-                const roleId = interaction.customId.split('_')[2];
-                const userId = interaction.user.id;
-                const result = await extendRole(roleId, userId);
                 await interaction.reply({ content: result.message, ephemeral: true });
                 return;
             }
