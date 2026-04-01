@@ -75,7 +75,7 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
     }
 
     // Position the role just below the specified target role (if exists)
-    const targetRoleId = '1446128863200542933'; // Role that should be above this one
+    const targetRoleId = '1446128863200542933';
     const targetRole = guild.roles.cache.get(targetRoleId);
     if (targetRole) {
         const targetPosition = targetRole.position;
@@ -127,7 +127,6 @@ async function addMemberToRole(interaction, roleId, targetUser) {
         return { success: false, message: 'Role not found. It may have been deleted.' };
     }
 
-    // Fetch the GuildMember for the target user
     let targetMember;
     try {
         targetMember = await interaction.guild.members.fetch(targetUser.id);
@@ -162,12 +161,17 @@ async function removeMemberFromRole(interaction, roleId, targetUser) {
     if (!roleData || roleData.ownerId !== ownerId) {
         return { success: false, message: 'You do not own this role.' };
     }
+
+    // Prevent owner from removing themselves
+    if (targetUser.id === ownerId) {
+        return { success: false, message: 'You cannot remove yourself from your own role.' };
+    }
+
     const role = interaction.guild.roles.cache.get(roleId);
     if (!role) {
         return { success: false, message: 'Role not found. It may have been deleted.' };
     }
 
-    // Fetch the GuildMember for the target user
     let targetMember;
     try {
         targetMember = await interaction.guild.members.fetch(targetUser.id);
@@ -195,9 +199,7 @@ async function editRole(interaction, roleId, newName, newIconAttachment, newColo
     try {
         if (newName) await role.setName(newName);
         if (newIconAttachment) {
-            if (!newIconAttachment.url.toLowerCase().endsWith('.png')) {
-                return { success: false, message: 'Icon URL must end with .png' };
-            }
+            // No PNG restriction
             await role.setIcon(newIconAttachment.url);
         }
         if (newColorHex) {
