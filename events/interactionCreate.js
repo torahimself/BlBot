@@ -167,10 +167,7 @@ module.exports = {
 
                 let attachment = null;
                 if (iconUrl && iconUrl.trim() !== '') {
-                    if (!iconUrl.toLowerCase().endsWith('.png')) {
-                        await interaction.reply({ content: '❌ Icon URL must end with .png', ephemeral: true });
-                        return;
-                    }
+                    // No PNG restriction; allow any URL
                     attachment = { url: iconUrl };
                 }
 
@@ -184,7 +181,26 @@ module.exports = {
                     colorHex = '#00FF00';
                 }
 
+                // Check if user already has a custom role (double-check)
+                const db = require('../utils/economy/database.js');
+                const userId = interaction.user.id;
+                const existingRole = await new Promise((resolve) => {
+                    db.get('SELECT roleId FROM purchased_roles WHERE ownerId = ?', [userId], (err, row) => {
+                        resolve(row);
+                    });
+                });
+                if (existingRole) {
+                    return interaction.reply({ content: '❌ You already own a custom role. Use /myrole to manage it.', ephemeral: true });
+                }
+
+                // Check balance
                 const isAdmin = interaction.member.permissions.has('Administrator');
+                const balance = await getBalance(userId);
+                if (!isAdmin && balance < ROLE_PRICE) {
+                    return interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, ephemeral: true });
+                }
+
+                // Create role
                 const result = await createCustomRole(interaction, roleName, attachment, colorHex, isAdmin);
                 if (result.success) {
                     await interaction.reply({ content: `✅ Role ${result.role.name} created!`, ephemeral: true });
@@ -202,10 +218,7 @@ module.exports = {
                 const newColor = interaction.fields.getTextInputValue('newColor');
                 let attachment = null;
                 if (newIcon && newIcon.trim() !== '') {
-                    if (!newIcon.toLowerCase().endsWith('.png')) {
-                        await interaction.reply({ content: '❌ Icon URL must end with .png', ephemeral: true });
-                        return;
-                    }
+                    // No PNG restriction
                     attachment = { url: newIcon };
                 }
                 let colorHex = null;
