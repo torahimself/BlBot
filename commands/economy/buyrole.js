@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const { getBalance, ROLE_PRICE } = require('../../utils/economy/shopManager.js');
 const allowedChannels = ['1464140979148689550'];
 
 module.exports = {
@@ -11,12 +10,16 @@ module.exports = {
             return interaction.reply({ content: `❌ This command can only be used in <#1464140979148689550>.`, ephemeral: true });
         }
 
+        // Check if user already has a custom role
+        const db = require('../../utils/economy/database.js');
         const userId = interaction.user.id;
-        const isAdmin = interaction.member.permissions.has('Administrator');
-        const balance = await getBalance(userId);
-
-        if (!isAdmin && balance < ROLE_PRICE) {
-            return interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, ephemeral: true });
+        const existingRole = await new Promise((resolve) => {
+            db.get('SELECT roleId FROM purchased_roles WHERE ownerId = ?', [userId], (err, row) => {
+                resolve(row);
+            });
+        });
+        if (existingRole) {
+            return interaction.reply({ content: `❌ You already own a custom role. Use /myrole to manage it.`, ephemeral: true });
         }
 
         const modal = new ModalBuilder()
@@ -32,7 +35,7 @@ module.exports = {
 
         const iconInput = new TextInputBuilder()
             .setCustomId('roleIcon')
-            .setLabel('Icon URL (optional, must end with .png)')
+            .setLabel('Icon URL (optional, any image URL)')
             .setStyle(TextInputStyle.Short)
             .setRequired(false);
 
