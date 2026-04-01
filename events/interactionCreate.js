@@ -50,85 +50,102 @@ module.exports = {
             return;
         }
 
-        // ---------- BUTTONS ----------
-        if (interaction.isButton()) {
-            if (interaction.customId.startsWith('trade_accept_')) {
-                const initiatorId = interaction.customId.split('_')[2];
-                let trade = null;
-                for (const t of activeTrades.values()) {
-                    if (t.initiatorId === initiatorId && t.targetId === interaction.user.id && !t.targetOffer) {
-                        trade = t;
-                        break;
-                    }
-                }
-                if (!trade) {
-                    return interaction.reply({ content: '❌ This trade request is no longer valid.', flags: 64 });
-                }
-                const modal = new ModalBuilder()
-                    .setCustomId(`trade_offer_${trade.id}`)
-                    .setTitle('Trade Offer')
-                    .addComponents(
-                        new ActionRowBuilder().addComponents(
-                            new TextInputBuilder()
-                                .setCustomId('offer')
-                                .setLabel('How many coins do you offer?')
-                                .setStyle(TextInputStyle.Short)
-                                .setRequired(true)
-                                .setMinLength(1)
-                        )
-                    );
-                await interaction.showModal(modal);
-                return;
-            }
-
-            if (interaction.customId.startsWith('trade_decline_')) {
-                const initiatorId = interaction.customId.split('_')[2];
-                let trade = null;
-                for (const t of activeTrades.values()) {
-                    if (t.initiatorId === initiatorId && t.targetId === interaction.user.id) {
-                        trade = t;
-                        break;
-                    }
-                }
-                if (trade) {
-                    cancelTrade(trade.id, `${interaction.user.tag} declined the trade.`);
-                    await interaction.reply({ content: '✅ You declined the trade.', flags: 64 });
-                } else {
-                    await interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
-                }
-                return;
-            }
-
-            if (interaction.customId.startsWith('trade_confirm_')) {
-                const tradeId = interaction.customId.split('_')[2];
-                const trade = getTrade(tradeId);
-                if (!trade) {
-                    return interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
-                }
-                const userId = interaction.user.id;
-                if (userId !== trade.initiatorId && userId !== trade.targetId) {
-                    return interaction.reply({ content: '❌ You are not part of this trade.', flags: 64 });
-                }
-
-                const confirmed = trade.confirm(userId);
-                if (confirmed) {
-                    await updateBalance(trade.initiatorId, -trade.initiatorOffer);
-                    await updateBalance(trade.targetId, trade.initiatorOffer);
-                    await updateBalance(trade.targetId, -trade.targetOffer);
-                    await updateBalance(trade.initiatorId, trade.targetOffer);
-
-                    const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
-                    const targetUser = await interaction.client.users.fetch(trade.targetId);
-                    const successMsg = `✅ Trade completed!\n${initiatorUser.tag} gave ${trade.initiatorOffer} coins to ${targetUser.tag}\n${targetUser.tag} gave ${trade.targetOffer} coins to ${initiatorUser.tag}`;
-                    await initiatorUser.send(successMsg).catch(console.error);
-                    await targetUser.send(successMsg).catch(console.error);
-                    await interaction.reply({ content: successMsg, flags: 64 });
-                } else {
-                    await interaction.reply({ content: '✅ You confirmed. Waiting for the other user...', flags: 64 });
-                }
-                return;
+// ---------- BUTTONS ----------
+if (interaction.isButton()) {
+    if (interaction.customId.startsWith('trade_accept_')) {
+        const initiatorId = interaction.customId.split('_')[2];
+        let trade = null;
+        for (const t of activeTrades.values()) {
+            if (t.initiatorId === initiatorId && t.targetId === interaction.user.id && !t.targetOffer) {
+                trade = t;
+                break;
             }
         }
+        if (!trade) {
+            return interaction.reply({ content: '❌ This trade request is no longer valid.', flags: 64 });
+        }
+
+        // Show modal to enter offer
+        const modal = new ModalBuilder()
+            .setCustomId(`trade_offer_${trade.id}`)
+            .setTitle('Trade Offer')
+            .addComponents(
+                new ActionRowBuilder().addComponents(
+                    new TextInputBuilder()
+                        .setCustomId('offer')
+                        .setLabel('How many coins do you offer?')
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true)
+                        .setMinLength(1)
+                )
+            );
+        await interaction.showModal(modal);
+        return;
+    }
+
+    if (interaction.customId.startsWith('trade_decline_')) {
+        const initiatorId = interaction.customId.split('_')[2];
+        let trade = null;
+        for (const t of activeTrades.values()) {
+            if (t.initiatorId === initiatorId && t.targetId === interaction.user.id) {
+                trade = t;
+                break;
+            }
+        }
+        if (trade) {
+            cancelTrade(trade.id, `${interaction.user.tag} declined the trade.`);
+            // Update original message to show decline
+            const channel = interaction.channel;
+            const originalMsg = await channel.messages.fetch(trade.messageId).catch(() => null);
+            if (originalMsg) {
+                await originalMsg.edit({ content: `❌ Trade cancelled: ${interaction.user.tag} declined.`, components: [] });
+            }
+            await interaction.reply({ content: '✅ You declined the trade.', flags: 64 });
+        } else {
+            await interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
+        }
+        return;
+    }
+
+    if (interaction.customId.startsWith('trade_confirm_')) {
+        const tradeId = interaction.customId.split('_')[2];
+        const trade = getTrade(tradeId);
+        if (!trade) {
+            return interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
+        }
+        const userId = interaction.user.id;
+        if (userId !== trade.initiatorId && userId !== trade.targetId) {
+            return interaction.reply({ content: '❌ You are not part of this trade.', flags: 64 });
+        }
+
+        const confirmed = trade.confirm(userId);
+        if (confirmed) {
+            // Execute trade
+            await updateBalance(trade.initiatorId, -trade.initiatorOffer);
+            await updateBalance(trade.targetId, trade.initiatorOffer);
+            await updateBalance(trade.targetId, -trade.targetOffer);
+            await updateBalance(trade.initiatorId, trade.targetOffer);
+
+            const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
+            const targetUser = await interaction.client.users.fetch(trade.targetId);
+            const successMsg = `✅ Trade completed!\n${initiatorUser.tag} gave ${trade.initiatorOffer} coins to ${targetUser.tag}\n${targetUser.tag} gave ${trade.targetOffer} coins to ${initiatorUser.tag}`;
+
+            // Update original message (if we stored messageId)
+            const channel = interaction.channel;
+            const originalMsg = await channel.messages.fetch(trade.messageId).catch(() => null);
+            if (originalMsg) {
+                await originalMsg.edit({ content: successMsg, components: [] });
+            } else {
+                // Fallback: send new message
+                await channel.send(successMsg);
+            }
+            await interaction.reply({ content: '✅ Trade completed!', flags: 64 });
+        } else {
+            await interaction.reply({ content: '✅ You confirmed. Waiting for the other user...', flags: 64 });
+        }
+        return;
+    }
+}
 
         // ---------- MODALS ----------
         if (interaction.isModalSubmit()) {
