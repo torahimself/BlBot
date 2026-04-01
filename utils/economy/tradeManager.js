@@ -12,7 +12,7 @@ class Trade {
         this.initiatorConfirmed = false;
         this.targetConfirmed = false;
         this.createdAt = Date.now();
-        this.timeout = setTimeout(() => this.cancel('Trade timed out after 40 seconds.'), 40000);
+        this.timeout = setTimeout(() => this.cancel('Trade timed out after 2 minutes.'), 120000);
     }
 
     cancel(reason) {
