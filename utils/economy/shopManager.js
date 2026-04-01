@@ -75,7 +75,7 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         return { success: false, message: 'Failed to create role. Coins refunded.' };
     }
 
-    // Position the role below the target role (optional)
+    // Position the role below the target role (optional) tt
     const targetRoleId = '1446128863200542933';
     const targetRole = guild.roles.cache.get(targetRoleId);
     if (targetRole) {
