@@ -51,14 +51,16 @@ module.exports = {
                     .setLabel('Decline')
                     .setStyle(ButtonStyle.Danger)
             );
-        await target.send({
-            content: `${initiator.tag} wants to trade with you. They offer **${initiatorOffer}** coins. Use the buttons below to respond.`,
+
+        // Send message in the channel, mentioning both users
+        const msg = await interaction.editReply({
+            content: `${initiator.tag} wants to trade with ${target.tag}. They offer **${initiatorOffer}** coins.\n${target}, do you accept?`,
             components: [row]
-        }).catch(() => {
-            cancelTrade(trade.id, 'Could not DM target user.');
-            return interaction.editReply(`❌ Could not DM ${target.tag}. Please ensure they accept DMs from server members.`);
         });
 
-        await interaction.editReply(`✅ Trade request sent to ${target.tag}. They have 40 seconds to respond.`);
+        // Store the message ID so we can later update/delete it if needed (optional)
+        // Not necessary for functionality but useful for cleanup
+        trade.channelId = interaction.channelId;
+        trade.messageId = msg.id;
     }
 };
