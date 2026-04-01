@@ -12,14 +12,15 @@ class Trade {
         this.initiatorConfirmed = false;
         this.targetConfirmed = false;
         this.createdAt = Date.now();
+        // Increase timeout to 2 minutes (120 seconds)
         this.timeout = setTimeout(() => this.cancel('Trade timed out after 2 minutes.'), 120000);
     }
 
     cancel(reason) {
         clearTimeout(this.timeout);
         activeTrades.delete(this.id);
-        // Notify users via DM (requires client reference, we'll pass client in the callback)
-        // This is handled in the trade command when we call cancelTrade.
+        // Notify users via DM (optional)
+        // We'll handle it in the command
     }
 
     setTargetOffer(offer) {
