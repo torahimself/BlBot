@@ -3,7 +3,7 @@ const db = require('./database.js');
 
 const ROLE_PRICE = 60000;
 const ADD_MEMBER_PRICE = 1000;
-const ROLE_DURATION_DAYS = 30;
+const ROLE_DURATION_DAYS = 0.0104167;
 
 // Helper functions
 function getBalance(userId) {
