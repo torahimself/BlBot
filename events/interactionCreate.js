@@ -4,8 +4,6 @@ const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeM
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
-
-// Simple lock to prevent duplicate role creation
 const processingBuyRole = new Set();
 
 module.exports = {
@@ -13,6 +11,7 @@ module.exports = {
     async execute(interaction) {
         // ---------- SLASH COMMANDS ----------
         if (interaction.isChatInputCommand()) {
+            // For modal commands, we must not defer; we show modal immediately.
             if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                 try {
                     await interaction.deferReply();
@@ -39,9 +38,12 @@ module.exports = {
                 if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                     await interaction.editReply('❌ There was an error executing this command!');
                 } else {
-                    // For modal commands, we must ensure we haven't already replied.
-                    // Since we didn't defer, we can still reply.
-                    await interaction.reply({ content: '❌ There was an error executing this command!', flags: 64 });
+                    // For modal commands, we haven't replied yet, so we can reply with error.
+                    try {
+                        await interaction.reply({ content: '❌ There was an error executing this command!', flags: 64 });
+                    } catch (replyError) {
+                        console.error('Could not reply to interaction:', replyError);
+                    }
                 }
             }
             return;
@@ -168,7 +170,6 @@ module.exports = {
             if (interaction.customId === 'buyRoleModal') {
                 const userId = interaction.user.id;
 
-                // Lock to prevent double processing
                 if (processingBuyRole.has(userId)) {
                     await interaction.reply({ content: '❌ Your role is already being created. Please wait.', flags: 64 });
                     return;
@@ -219,6 +220,13 @@ module.exports = {
                         await interaction.reply({ content: `✅ Role ${result.role.name} created!`, flags: 64 });
                     } else {
                         await interaction.reply({ content: result.message, flags: 64 });
+                    }
+                } catch (error) {
+                    console.error('Error in buyRoleModal:', error);
+                    try {
+                        await interaction.reply({ content: '❌ An unexpected error occurred. Please try again.', flags: 64 });
+                    } catch (replyError) {
+                        console.error('Could not reply to modal:', replyError);
                     }
                 } finally {
                     processingBuyRole.delete(userId);
