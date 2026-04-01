@@ -25,7 +25,7 @@ module.exports = {
                 .setRequired(false);
             const iconInput = new TextInputBuilder()
                 .setCustomId('newIcon')
-                .setLabel('New Icon URL (must be .png)')
+                .setLabel('New Icon URL (any image URL)')
                 .setStyle(TextInputStyle.Short)
                 .setRequired(false);
             const colorInput = new TextInputBuilder()
