@@ -1,17 +1,19 @@
 const commandHandler = require('../handlers/commandHandler');
-const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBalance } = require('../utils/economy/shopManager.js');
+const shopManager = require('../utils/economy/shopManager.js'); // import entire module
 const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
 
+// Destructure needed functions
+const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBalance } = shopManager;
+
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
         // ---------- SLASH COMMANDS ----------
         if (interaction.isChatInputCommand()) {
-            // For modal commands, we must not defer; we show modal immediately.
             if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                 try {
                     await interaction.deferReply();
@@ -38,7 +40,6 @@ module.exports = {
                 if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                     await interaction.editReply('❌ There was an error executing this command!');
                 } else {
-                    // For modal commands, we haven't replied yet, so we can reply with error.
                     try {
                         await interaction.reply({ content: '❌ There was an error executing this command!', flags: 64 });
                     } catch (replyError) {
