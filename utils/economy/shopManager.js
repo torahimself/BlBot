@@ -64,7 +64,7 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
     try {
         role = await guild.roles.create({
             name: name,
-            color: roleColor,
+            colors: [roleColor],  // Use colors array to avoid deprecation warning
             icon: iconAttachment ? iconAttachment.url : null,
             reason: `Custom role purchased by ${interaction.user.tag}`
         });
@@ -74,7 +74,7 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         return { success: false, message: 'Failed to create role. Coins refunded.' };
     }
 
-    // Position the role just below the specified target role (if exists)
+    // Position the role just below the target role
     const targetRoleId = '1446128863200542933';
     const targetRole = guild.roles.cache.get(targetRoleId);
     if (targetRole) {
@@ -85,7 +85,6 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
             console.warn('Could not set role position:', err.message);
         }
     } else {
-        // Fallback: set to a low position (e.g., 2)
         try {
             await role.setPosition(2);
         } catch (err) {
@@ -162,7 +161,6 @@ async function removeMemberFromRole(interaction, roleId, targetUser) {
         return { success: false, message: 'You do not own this role.' };
     }
 
-    // Prevent owner from removing themselves
     if (targetUser.id === ownerId) {
         return { success: false, message: 'You cannot remove yourself from your own role.' };
     }
@@ -199,7 +197,6 @@ async function editRole(interaction, roleId, newName, newIconAttachment, newColo
     try {
         if (newName) await role.setName(newName);
         if (newIconAttachment) {
-            // No PNG restriction
             await role.setIcon(newIconAttachment.url);
         }
         if (newColorHex) {
