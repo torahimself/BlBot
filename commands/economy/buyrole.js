@@ -7,19 +7,7 @@ module.exports = {
         .setDescription('Purchase a custom role (60000 coins)'),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
-            return interaction.reply({ content: `❌ This command can only be used in <#1464140979148689550>.`, ephemeral: true });
-        }
-
-        // Check if user already has a custom role
-        const db = require('../../utils/economy/database.js');
-        const userId = interaction.user.id;
-        const existingRole = await new Promise((resolve) => {
-            db.get('SELECT roleId FROM purchased_roles WHERE ownerId = ?', [userId], (err, row) => {
-                resolve(row);
-            });
-        });
-        if (existingRole) {
-            return interaction.reply({ content: `❌ You already own a custom role. Use /myrole to manage it.`, ephemeral: true });
+            return interaction.reply({ content: `❌ This command can only be used in <#1464140979148689550>.`, flags: 64 });
         }
 
         const modal = new ModalBuilder()
@@ -35,7 +23,7 @@ module.exports = {
 
         const iconInput = new TextInputBuilder()
             .setCustomId('roleIcon')
-            .setLabel('Icon URL (optional, any image URL)')
+            .setLabel('Icon URL (optional)')
             .setStyle(TextInputStyle.Short)
             .setRequired(false);
 
