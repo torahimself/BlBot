@@ -43,23 +43,20 @@ module.exports = {
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`trade_accept_${initiator.id}`)
+                    .setCustomId(`trade_accept_${trade.id}`)
                     .setLabel('Accept Trade')
                     .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
-                    .setCustomId(`trade_decline_${initiator.id}`)
+                    .setCustomId(`trade_decline_${trade.id}`)
                     .setLabel('Decline')
                     .setStyle(ButtonStyle.Danger)
             );
 
-        // Send message in the channel, mentioning both users
         const msg = await interaction.editReply({
             content: `${initiator.tag} wants to trade with ${target.tag}. They offer **${initiatorOffer}** coins.\n${target}, do you accept?`,
             components: [row]
         });
 
-        // Store the message ID so we can later update/delete it if needed (optional)
-        // Not necessary for functionality but useful for cleanup
         trade.channelId = interaction.channelId;
         trade.messageId = msg.id;
     }
