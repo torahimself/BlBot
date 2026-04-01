@@ -149,40 +149,43 @@ if (interaction.isButton()) {
 
         // ---------- MODALS ----------
         if (interaction.isModalSubmit()) {
-            // Trade offer modal
-            if (interaction.customId.startsWith('trade_offer_')) {
-                const tradeId = interaction.customId.split('_')[2];
-                const trade = getTrade(tradeId);
-                if (!trade) {
-                    return interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
-                }
-                const targetOffer = parseInt(interaction.fields.getTextInputValue('offer'), 10);
-                if (isNaN(targetOffer) || targetOffer < 0) {
-                    return interaction.reply({ content: '❌ Invalid amount. Please enter a positive number.', flags: 64 });
-                }
-                const targetBalance = await getBalance(interaction.user.id);
-                if (targetOffer > targetBalance) {
-                    return interaction.reply({ content: `❌ You only have ${targetBalance} coins. Cannot offer ${targetOffer}.`, flags: 64 });
-                }
-                trade.setTargetOffer(targetOffer);
+// Trade offer modal
+if (interaction.customId.startsWith('trade_offer_')) {
+    const tradeId = interaction.customId.split('_')[2];
+    const trade = getTrade(tradeId);
+    if (!trade) {
+        return interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
+    }
+    const targetOffer = parseInt(interaction.fields.getTextInputValue('offer'), 10);
+    if (isNaN(targetOffer) || targetOffer < 0) {
+        return interaction.reply({ content: '❌ Invalid amount. Please enter a positive number.', flags: 64 });
+    }
+    const targetBalance = await getBalance(interaction.user.id);
+    if (targetOffer > targetBalance) {
+        return interaction.reply({ content: `❌ You only have ${targetBalance} coins. Cannot offer ${targetOffer}.`, flags: 64 });
+    }
+    trade.setTargetOffer(targetOffer);
 
-                const confirmRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`trade_confirm_${trade.id}`)
-                            .setLabel('Confirm Trade')
-                            .setStyle(ButtonStyle.Success)
-                    );
+    // Update the original message to show both offers
+    const channel = interaction.channel;
+    const originalMsg = await channel.messages.fetch(trade.messageId).catch(() => null);
+    if (originalMsg) {
+        const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
+        const targetUser = await interaction.client.users.fetch(trade.targetId);
+        const tradeSummary = `**Trade Summary**\n${initiatorUser.tag} offers: ${trade.initiatorOffer}\n${targetUser.tag} offers: ${trade.targetOffer}\n\nBoth users must now click "Confirm Trade" below.`;
+        const confirmRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`trade_confirm_${trade.id}`)
+                    .setLabel('Confirm Trade')
+                    .setStyle(ButtonStyle.Success)
+            );
+        await originalMsg.edit({ content: tradeSummary, components: [confirmRow] });
+    }
 
-                const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
-                const targetUser = await interaction.client.users.fetch(trade.targetId);
-                const tradeSummary = `**Trade Summary**\n${initiatorUser.tag} offers: ${trade.initiatorOffer}\n${targetUser.tag} offers: ${trade.targetOffer}\n\nClick Confirm to finalize.`;
-                await initiatorUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
-                await targetUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
-
-                await interaction.reply({ content: '✅ Your offer has been recorded. Both users must now click "Confirm Trade".', flags: 64 });
-                return;
-            }
+    await interaction.reply({ content: '✅ Your offer has been recorded. Both users must now click "Confirm Trade".', flags: 64 });
+    return;
+}
 
             // Buy role modal
             if (interaction.customId === 'buyRoleModal') {
