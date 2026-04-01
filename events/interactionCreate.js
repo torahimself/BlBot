@@ -14,14 +14,19 @@ module.exports = {
     async execute(interaction) {
         // ---------- SLASH COMMANDS ----------
         if (interaction.isChatInputCommand()) {
-            if (!MODAL_COMMANDS.includes(interaction.commandName)) {
-                try {
-                    await interaction.deferReply();
-                } catch (error) {
-                    console.error('Error deferring reply:', error);
-                    return;
-                }
-            }
+           if (!MODAL_COMMANDS.includes(interaction.commandName)) {
+    try {
+        await interaction.deferReply();
+    } catch (error) {
+        if (error.code === 10062) {
+            // Interaction expired – just return without replying
+            console.warn('Interaction expired, cannot defer reply.');
+            return;
+        }
+        console.error('Error deferring reply:', error);
+        return;
+    }
+}
 
             const command = commandHandler.commands.get(interaction.commandName);
             if (!command) {
