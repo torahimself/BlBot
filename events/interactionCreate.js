@@ -5,6 +5,9 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBui
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 
+// Simple lock to prevent duplicate role creation
+const processingBuyRole = new Set();
+
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction) {
@@ -24,7 +27,7 @@ module.exports = {
                 if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                     await interaction.editReply('❌ Command not found!');
                 } else {
-                    await interaction.reply({ content: '❌ Command not found!', ephemeral: true });
+                    await interaction.reply({ content: '❌ Command not found!', flags: 64 });
                 }
                 return;
             }
@@ -36,7 +39,9 @@ module.exports = {
                 if (!MODAL_COMMANDS.includes(interaction.commandName)) {
                     await interaction.editReply('❌ There was an error executing this command!');
                 } else {
-                    await interaction.reply({ content: '❌ There was an error executing this command!', ephemeral: true });
+                    // For modal commands, we must ensure we haven't already replied.
+                    // Since we didn't defer, we can still reply.
+                    await interaction.reply({ content: '❌ There was an error executing this command!', flags: 64 });
                 }
             }
             return;
@@ -54,7 +59,7 @@ module.exports = {
                     }
                 }
                 if (!trade) {
-                    return interaction.reply({ content: '❌ This trade request is no longer valid.', ephemeral: true });
+                    return interaction.reply({ content: '❌ This trade request is no longer valid.', flags: 64 });
                 }
                 const modal = new ModalBuilder()
                     .setCustomId(`trade_offer_${trade.id}`)
@@ -84,9 +89,9 @@ module.exports = {
                 }
                 if (trade) {
                     cancelTrade(trade.id, `${interaction.user.tag} declined the trade.`);
-                    await interaction.reply({ content: '✅ You declined the trade.', ephemeral: true });
+                    await interaction.reply({ content: '✅ You declined the trade.', flags: 64 });
                 } else {
-                    await interaction.reply({ content: '❌ Trade no longer exists.', ephemeral: true });
+                    await interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
                 }
                 return;
             }
@@ -95,11 +100,11 @@ module.exports = {
                 const tradeId = interaction.customId.split('_')[2];
                 const trade = getTrade(tradeId);
                 if (!trade) {
-                    return interaction.reply({ content: '❌ Trade no longer exists.', ephemeral: true });
+                    return interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
                 }
                 const userId = interaction.user.id;
                 if (userId !== trade.initiatorId && userId !== trade.targetId) {
-                    return interaction.reply({ content: '❌ You are not part of this trade.', ephemeral: true });
+                    return interaction.reply({ content: '❌ You are not part of this trade.', flags: 64 });
                 }
 
                 const confirmed = trade.confirm(userId);
@@ -114,9 +119,9 @@ module.exports = {
                     const successMsg = `✅ Trade completed!\n${initiatorUser.tag} gave ${trade.initiatorOffer} coins to ${targetUser.tag}\n${targetUser.tag} gave ${trade.targetOffer} coins to ${initiatorUser.tag}`;
                     await initiatorUser.send(successMsg).catch(console.error);
                     await targetUser.send(successMsg).catch(console.error);
-                    await interaction.reply({ content: successMsg, ephemeral: true });
+                    await interaction.reply({ content: successMsg, flags: 64 });
                 } else {
-                    await interaction.reply({ content: '✅ You confirmed. Waiting for the other user...', ephemeral: true });
+                    await interaction.reply({ content: '✅ You confirmed. Waiting for the other user...', flags: 64 });
                 }
                 return;
             }
@@ -129,15 +134,15 @@ module.exports = {
                 const tradeId = interaction.customId.split('_')[2];
                 const trade = getTrade(tradeId);
                 if (!trade) {
-                    return interaction.reply({ content: '❌ Trade no longer exists.', ephemeral: true });
+                    return interaction.reply({ content: '❌ Trade no longer exists.', flags: 64 });
                 }
                 const targetOffer = parseInt(interaction.fields.getTextInputValue('offer'), 10);
                 if (isNaN(targetOffer) || targetOffer < 0) {
-                    return interaction.reply({ content: '❌ Invalid amount. Please enter a positive number.', ephemeral: true });
+                    return interaction.reply({ content: '❌ Invalid amount. Please enter a positive number.', flags: 64 });
                 }
                 const targetBalance = await getBalance(interaction.user.id);
                 if (targetOffer > targetBalance) {
-                    return interaction.reply({ content: `❌ You only have ${targetBalance} coins. Cannot offer ${targetOffer}.`, ephemeral: true });
+                    return interaction.reply({ content: `❌ You only have ${targetBalance} coins. Cannot offer ${targetOffer}.`, flags: 64 });
                 }
                 trade.setTargetOffer(targetOffer);
 
@@ -155,57 +160,68 @@ module.exports = {
                 await initiatorUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
                 await targetUser.send({ content: tradeSummary, components: [confirmRow] }).catch(console.error);
 
-                await interaction.reply({ content: '✅ Your offer has been recorded. Both users must now click "Confirm Trade".', ephemeral: true });
+                await interaction.reply({ content: '✅ Your offer has been recorded. Both users must now click "Confirm Trade".', flags: 64 });
                 return;
             }
 
             // Buy role modal
             if (interaction.customId === 'buyRoleModal') {
-                const roleName = interaction.fields.getTextInputValue('roleName');
-                let iconUrl = interaction.fields.getTextInputValue('roleIcon');
-                let colorHex = interaction.fields.getTextInputValue('roleColor');
+                const userId = interaction.user.id;
 
-                let attachment = null;
-                if (iconUrl && iconUrl.trim() !== '') {
-                    // No PNG restriction; allow any URL
-                    attachment = { url: iconUrl };
+                // Lock to prevent double processing
+                if (processingBuyRole.has(userId)) {
+                    await interaction.reply({ content: '❌ Your role is already being created. Please wait.', flags: 64 });
+                    return;
                 }
+                processingBuyRole.add(userId);
 
-                if (colorHex && colorHex.trim() !== '') {
-                    const hexRegex = /^#([0-9A-Fa-f]{6})$/;
-                    if (!hexRegex.test(colorHex)) {
-                        await interaction.reply({ content: '❌ Invalid color format. Use #RRGGBB (e.g., #FF0000).', ephemeral: true });
+                try {
+                    const roleName = interaction.fields.getTextInputValue('roleName');
+                    let iconUrl = interaction.fields.getTextInputValue('roleIcon');
+                    let colorHex = interaction.fields.getTextInputValue('roleColor');
+
+                    let attachment = null;
+                    if (iconUrl && iconUrl.trim() !== '') {
+                        attachment = { url: iconUrl };
+                    }
+
+                    if (colorHex && colorHex.trim() !== '') {
+                        const hexRegex = /^#([0-9A-Fa-f]{6})$/;
+                        if (!hexRegex.test(colorHex)) {
+                            await interaction.reply({ content: '❌ Invalid color format. Use #RRGGBB (e.g., #FF0000).', flags: 64 });
+                            return;
+                        }
+                    } else {
+                        colorHex = '#00FF00';
+                    }
+
+                    // Check if user already owns a role
+                    const db = require('../utils/economy/database.js');
+                    const existingRole = await new Promise((resolve) => {
+                        db.get('SELECT roleId FROM purchased_roles WHERE ownerId = ?', [userId], (err, row) => {
+                            resolve(row);
+                        });
+                    });
+                    if (existingRole) {
+                        await interaction.reply({ content: '❌ You already own a custom role. Use /myrole to manage it.', flags: 64 });
                         return;
                     }
-                } else {
-                    colorHex = '#00FF00';
-                }
 
-                // Check if user already has a custom role (double-check)
-                const db = require('../utils/economy/database.js');
-                const userId = interaction.user.id;
-                const existingRole = await new Promise((resolve) => {
-                    db.get('SELECT roleId FROM purchased_roles WHERE ownerId = ?', [userId], (err, row) => {
-                        resolve(row);
-                    });
-                });
-                if (existingRole) {
-                    return interaction.reply({ content: '❌ You already own a custom role. Use /myrole to manage it.', ephemeral: true });
-                }
+                    const isAdmin = interaction.member.permissions.has('Administrator');
+                    const balance = await getBalance(userId);
+                    if (!isAdmin && balance < ROLE_PRICE) {
+                        await interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, flags: 64 });
+                        return;
+                    }
 
-                // Check balance
-                const isAdmin = interaction.member.permissions.has('Administrator');
-                const balance = await getBalance(userId);
-                if (!isAdmin && balance < ROLE_PRICE) {
-                    return interaction.reply({ content: `❌ You need ${ROLE_PRICE} coins. You have ${balance}.`, ephemeral: true });
-                }
-
-                // Create role
-                const result = await createCustomRole(interaction, roleName, attachment, colorHex, isAdmin);
-                if (result.success) {
-                    await interaction.reply({ content: `✅ Role ${result.role.name} created!`, ephemeral: true });
-                } else {
-                    await interaction.reply({ content: result.message, ephemeral: true });
+                    const result = await createCustomRole(interaction, roleName, attachment, colorHex, isAdmin);
+                    if (result.success) {
+                        await interaction.reply({ content: `✅ Role ${result.role.name} created!`, flags: 64 });
+                    } else {
+                        await interaction.reply({ content: result.message, flags: 64 });
+                    }
+                } finally {
+                    processingBuyRole.delete(userId);
                 }
                 return;
             }
@@ -218,20 +234,19 @@ module.exports = {
                 const newColor = interaction.fields.getTextInputValue('newColor');
                 let attachment = null;
                 if (newIcon && newIcon.trim() !== '') {
-                    // No PNG restriction
                     attachment = { url: newIcon };
                 }
                 let colorHex = null;
                 if (newColor && newColor.trim() !== '') {
                     const hexRegex = /^#([0-9A-Fa-f]{6})$/;
                     if (!hexRegex.test(newColor)) {
-                        await interaction.reply({ content: '❌ Invalid color format. Use #RRGGBB.', ephemeral: true });
+                        await interaction.reply({ content: '❌ Invalid color format. Use #RRGGBB.', flags: 64 });
                         return;
                     }
                     colorHex = newColor;
                 }
                 const result = await editRole(interaction, roleId, newName || null, attachment, colorHex);
-                await interaction.reply({ content: result.message, ephemeral: true });
+                await interaction.reply({ content: result.message, flags: 64 });
                 return;
             }
         }
