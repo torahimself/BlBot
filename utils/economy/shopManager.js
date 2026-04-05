@@ -5,8 +5,8 @@ const ROLE_PRICE = 60000;
 const ADD_MEMBER_PRICE = 1000;
 
 // ===== EXPIRATION CONFIGURATION (TESTING) =====
-const ROLE_DURATION_MS = 2 * 60 * 1000;          // 2 minutes
-const EXPIRATION_WARNING_MS = 1 * 60 * 1000;     // warn 1 minute before expiration
+const ROLE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;          // 2 minutes
+const EXPIRATION_WARNING_MS = 24 * 60 * 60 * 1000;     // warn 1 minute before expiration
 // =============================================
 
 // For production, comment the above and uncomment below:
