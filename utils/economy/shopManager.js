@@ -4,12 +4,14 @@ const db = require('./database.js');
 const ROLE_PRICE = 60000;
 const ADD_MEMBER_PRICE = 1000;
 
-// ===== EXPIRATION CONFIGURATION =====
-// For testing: 15 minutes
-const ROLE_DURATION_MS = 15 * 60 * 1000;   // 15 minutes
-// For production: 30 days
+// ===== EXPIRATION CONFIGURATION (TESTING) =====
+const ROLE_DURATION_MS = 2 * 60 * 1000;          // 2 minutes
+const EXPIRATION_WARNING_MS = 1 * 60 * 1000;     // warn 1 minute before expiration
+// =============================================
+
+// For production, comment the above and uncomment below:
 // const ROLE_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-// ====================================
+// const EXPIRATION_WARNING_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function getBalance(userId) {
     return new Promise((resolve, reject) => {
@@ -80,7 +82,7 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
         return { success: false, message: 'Failed to create role. Coins refunded.' };
     }
 
-    // Position the role below the target role
+    // Position the role below the target role (optional)
     const targetRoleId = '1446128863200542933';
     const targetRole = guild.roles.cache.get(targetRoleId);
     if (targetRole) {
@@ -99,7 +101,7 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
     }
 
     const now = Date.now();
-    const expiration = now + ROLE_DURATION_MS;   // <-- expiration uses the constant
+    const expiration = now + ROLE_DURATION_MS;   // <-- uses testing or production constant
     db.run(
         'INSERT INTO purchased_roles (roleId, ownerId, purchaseDate, expirationDate) VALUES (?, ?, ?, ?)',
         [role.id, userId, now, expiration],
@@ -225,7 +227,7 @@ async function extendRole(roleId, ownerId) {
         return { success: false, message: `You need ${ROLE_PRICE} coins to extend.` };
     }
     await updateBalance(ownerId, -ROLE_PRICE);
-    const newExpiration = Date.now() + ROLE_DURATION_MS;   // <-- uses the same constant
+    const newExpiration = Date.now() + ROLE_DURATION_MS;   // <-- uses same duration
     db.run('UPDATE purchased_roles SET expirationDate = ?, extendedCount = extendedCount + 1 WHERE roleId = ?',
         [newExpiration, roleId]);
     return { success: true, message: `Role extended for ${ROLE_DURATION_MS / (1000 * 60 * 60 * 24)} days.` };
@@ -251,12 +253,13 @@ function getRoleMemberCount(roleId) {
 
 async function checkExpiredRoles(client, logChannelId) {
     const now = Date.now();
-    const expirationWarningTime = 24 * 60 * 60 * 1000; // 24 hours warning
+    const expirationWarningTime = EXPIRATION_WARNING_MS;   // <-- uses testing or production constant
     db.all('SELECT roleId, ownerId, expirationDate FROM purchased_roles', async (err, rows) => {
         if (err) return console.error(err);
         for (const row of rows) {
             const timeLeft = row.expirationDate - now;
             if (timeLeft <= 0) {
+                // Delete role
                 let role = null;
                 for (const guild of client.guilds.cache.values()) {
                     role = guild.roles.cache.get(row.roleId);
@@ -273,7 +276,9 @@ async function checkExpiredRoles(client, logChannelId) {
                     const logChannel = client.channels.cache.get(logChannelId);
                     if (logChannel) logChannel.send(`Expired role <@&${row.roleId}> owned by <@${row.ownerId}> has been deleted.`);
                 }
+                console.log(`🗑️ Expired role ${row.roleId} deleted.`);
             } else if (timeLeft <= expirationWarningTime && timeLeft > 0) {
+                // Send warning (once per check – you may want to track sent warnings to avoid spam)
                 const owner = await client.users.fetch(row.ownerId).catch(() => null);
                 if (owner) {
                     const buttonRow = new ActionRowBuilder()
@@ -284,9 +289,10 @@ async function checkExpiredRoles(client, logChannelId) {
                                 .setStyle(ButtonStyle.Primary)
                         );
                     owner.send({
-                        content: `Your role <@&${row.roleId}> will expire in less than 24 hours. Click below to extend for another ${ROLE_DURATION_MS / (1000 * 60 * 60 * 24)} days (cost ${ROLE_PRICE} coins).`,
+                        content: `⚠️ Your role <@&${row.roleId}> will expire in less than ${expirationWarningTime / 60000} minutes. Click below to extend for another ${ROLE_DURATION_MS / (1000 * 60 * 60 * 24)} days (cost ${ROLE_PRICE} coins).`,
                         components: [buttonRow]
                     }).catch(console.error);
+                    console.log(`⚠️ Warning sent to ${owner.tag} about role ${row.roleId} expiring soon.`);
                 }
             }
         }
