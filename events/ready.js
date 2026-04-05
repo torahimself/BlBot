@@ -55,7 +55,7 @@ module.exports = {
             // FOR TESTING: check every minute (60 seconds)
             const checkInterval = setInterval(() => {
                 checkExpiredRoles(client, '1380869949463199856');
-            }, 60 * 1000); // every minute
+            }, 24 * 60 * 60 * 1000); // every minute
             
             // FOR PRODUCTION: uncomment below and comment the above
             // setInterval(() => {
