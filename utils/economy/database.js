@@ -19,7 +19,7 @@ db.serialize(() => {
         )
     `);
 
-    // Ensure column exists (for old databases)
+    // Ensure column exists (for old databases mhmm )
     db.run("ALTER TABLE users ADD COLUMN lastWorkTime INTEGER DEFAULT 0", (err) => {
         if (err && !err.message.includes('duplicate column')) {
             console.error('Error adding lastWorkTime column:', err.message);
