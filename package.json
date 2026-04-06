@@ -11,7 +11,8 @@
     "discord.js": "^14.14.1",
     "express": "^4.18.2",
     "node-cron": "^3.0.3",
-    "sqlite3": "^5.1.6"
+    "sqlite3": "^5.1.6",
+    "dotenv": "^16.4.5"
   },
   "keywords": [
     "discord",
@@ -22,6 +23,6 @@
     "counter",
     "economy"
   ],
-  "author": "ypye",
+  "author": "Your Name",
   "license": "MIT"
 }
