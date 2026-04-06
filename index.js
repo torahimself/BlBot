@@ -1,3 +1,6 @@
+require('dotenv').config();
+
+// Rest of your code (the existing content)
 const fs = require('fs');
 const path = require('path');
 
