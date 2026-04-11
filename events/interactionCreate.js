@@ -2,11 +2,16 @@ const commandHandler = require('../handlers/commandHandler');
 const shopManager = require('../utils/economy/shopManager.js');
 const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const gameHandler = require('../handlers/gameHandler.js');
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
 
-const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBalance } = shopManager;
+const { createCustomRole, editRole, getBalance, ROLE_PRICE, updateBalance } = shopManager;
+
+// Game button/modal prefixes — routed to gameHandler
+const GAME_BUTTON_PREFIXES = ['coinflip_', 'numberduel_', 'bj_', 'lms_', 'rr_', 'hp_'];
+const GAME_MODAL_PREFIXES = ['numberduel_pick_'];
 
 module.exports = {
   name: 'interactionCreate',
@@ -57,9 +62,21 @@ module.exports = {
     // ---------- BUTTONS ----------
     if (interaction.isButton()) {
 
+      // Route game buttons to gameHandler
+      if (GAME_BUTTON_PREFIXES.some(p => interaction.customId.startsWith(p))) {
+        try {
+          await gameHandler.handleButton(interaction);
+        } catch (err) {
+          console.error('gameHandler.handleButton error:', err);
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ An error occurred.', flags: 64 }).catch(() => {});
+          }
+        }
+        return;
+      }
+
       // --- Trade Accept ---
       if (interaction.customId.startsWith('trade_accept_')) {
-        // Use slice to safely extract the full trade ID (avoids underscore split issues)
         const tradeId = interaction.customId.slice('trade_accept_'.length);
         const trade = getTrade(tradeId);
 
@@ -131,7 +148,6 @@ module.exports = {
         const confirmed = trade.confirm(userId);
 
         if (confirmed) {
-          // Transfer coins: each gives their offered amount to the other
           await updateBalance(trade.initiatorId, -trade.initiatorOffer);
           await updateBalance(trade.targetId, trade.initiatorOffer);
           await updateBalance(trade.targetId, -trade.targetOffer);
@@ -159,6 +175,19 @@ module.exports = {
 
     // ---------- MODALS ----------
     if (interaction.isModalSubmit()) {
+
+      // Route game modals to gameHandler
+      if (GAME_MODAL_PREFIXES.some(p => interaction.customId.startsWith(p))) {
+        try {
+          await gameHandler.handleModal(interaction);
+        } catch (err) {
+          console.error('gameHandler.handleModal error:', err);
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ An error occurred.', flags: 64 }).catch(() => {});
+          }
+        }
+        return;
+      }
 
       // --- Trade Offer Modal ---
       if (interaction.customId.startsWith('trade_offer_')) {
