@@ -2,7 +2,7 @@ const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = re
 const { createDuel, isInDuel } = require('../../utils/economy/duelManager.js');
 const { getBalance } = require('../../utils/economy/shopManager.js');
 
-const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
+const ALLOWED_CHANNELS = ['1415933682748751923'];
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -31,7 +31,8 @@ module.exports = {
     const targetBalance = await getBalance(target.id);
     if (bet > targetBalance) return interaction.editReply(`❌ <@${target.id}> only has ${targetBalance} coins.`);
 
-    const duel = createDuel('coinflip', initiator.id, target.id, bet);
+    // initiatorSide will be set after target accepts
+    const duel = createDuel('coinflip', initiator.id, target.id, bet, { initiatorSide: null });
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`coinflip_accept_${duel.id}`).setLabel('Accept').setStyle(ButtonStyle.Success),
