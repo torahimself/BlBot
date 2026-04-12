@@ -1,6 +1,6 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { getDuel, deleteDuel } = require('../utils/economy/duelManager.js');
-const { getGame, deleteGame } = require('../utils/economy/gameManager.js');
+const { getGame, deleteGame, doRRTurn } = require('../utils/economy/gameManager.js');
 const { getBalance, updateBalance } = require('../utils/economy/shopManager.js');
 
 // ─── Blackjack helpers ────────────────────────────────────────────────────────
@@ -100,20 +100,16 @@ async function resolveBJ(duel, channel) {
 
 // ─── Hot Potato helpers ───────────────────────────────────────────────────────
 
-// Starts (or restarts after an elimination) the potato timer for remaining players
 async function startHotPotato(game, client) {
   const channel = client.channels.cache.get(game.channelId);
   if (!channel) return deleteGame(game.id);
 
   game.status = 'active';
   game.exploded = false;
-
-  // Pick random holder from remaining players
   game.potatoHolder = game.players[Math.floor(Math.random() * game.players.length)];
 
-  // Hidden timer: 20–45 seconds
   const explodeIn = Math.floor(Math.random() * 25000) + 20000;
-  const pot = game.betAmount * game.players.length; // original pot (all players paid in at start)
+  const pot = game._totalPot;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`hp_pass_${game.id}`).setLabel('Pass 🥔').setStyle(ButtonStyle.Primary),
@@ -127,26 +123,21 @@ async function startHotPotato(game, client) {
     });
   }
 
-  // Set explosion timer
   game.potatoTimeout = setTimeout(async () => {
     const g = getGame(game.id);
-    if (!g || g.exploded) return; // already resolved
+    if (!g || g.exploded) return;
 
-    g.exploded = true; // lock immediately
+    g.exploded = true;
 
     const loserId = g.potatoHolder;
-    g.players = g.players.filter(p => p !== loserId); // eliminate from players list
+    g.players = g.players.filter(p => p !== loserId);
 
     const ch = client.channels.cache.get(g.channelId);
     if (!ch) return deleteGame(g.id);
 
-    // If only 1 player left — that player wins the full pot
     if (g.players.length === 1) {
       const winnerId = g.players[0];
-      const fullPot = g.betAmount * (g.players.length + 1 + (g._eliminated || 0)); // total everyone paid
-      // Simpler: just pay out the remaining tracked pot
       await updateBalance(winnerId, g._totalPot);
-
       const finalMsg = await ch.messages.fetch(g.messageId).catch(() => null);
       if (finalMsg) {
         await finalMsg.edit({
@@ -158,7 +149,6 @@ async function startHotPotato(game, client) {
       return;
     }
 
-    // More than 1 player left — announce elimination and restart
     const elimMsg = await ch.messages.fetch(g.messageId).catch(() => null);
     if (elimMsg) {
       await elimMsg.edit({
@@ -167,7 +157,6 @@ async function startHotPotato(game, client) {
       });
     }
 
-    // Short pause then restart
     await new Promise(r => setTimeout(r, 2500));
     await startHotPotato(g, client);
   }, explodeIn);
@@ -358,7 +347,6 @@ async function handleButton(interaction) {
 
     const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
     if (msg) await msg.edit({ content: buildBJPublicContent(duel), components: buildBJRows(duel) });
-
     await interaction.reply({ content: buildBJPrivateContent(duel, playerId), flags: 64 });
 
     if (bothDone) await resolveBJ(duel, interaction.channel);
@@ -411,39 +399,33 @@ async function handleButton(interaction) {
     return interaction.reply({ content: '✅ You joined!', flags: 64 });
   }
 
-  // ── Russian Roulette: Pull Trigger ────────────────────────────────────────
-  if (id.startsWith('rr_pull_')) {
-    const gameId = id.slice('rr_pull_'.length);
+  // ── Russian Roulette: Shoot ───────────────────────────────────────────────
+  if (id.startsWith('rr_shoot_')) {
+    const rest = id.slice('rr_shoot_'.length);
+    const underscoreIdx = rest.indexOf('_');
+    const gameId = rest.slice(0, underscoreIdx);
+    const targetId = rest.slice(underscoreIdx + 1);
+
     const game = getGame(gameId);
-
     if (!game || game.status !== 'active') return interaction.reply({ content: '❌ This game is no longer active.', flags: 64 });
-
-    const currentPlayer = game.rrActive[game.rrCurrentIdx];
-    if (interaction.user.id !== currentPlayer) {
-      return interaction.reply({ content: `❌ It's not your turn! Waiting for <@${currentPlayer}>.`, flags: 64 });
+    if (interaction.user.id !== game.rrShooter) {
+      return interaction.reply({ content: `❌ It's not your turn! <@${game.rrShooter}> is currently shooting.`, flags: 64 });
+    }
+    if (!game.rrActive.includes(targetId)) {
+      return interaction.reply({ content: '❌ That player is no longer in the game.', flags: 64 });
     }
 
-    const pot = game.betAmount * game.players.length;
+    // Clear AFK timeout since shooter acted
+    if (game.rrTurnTimeout) { clearTimeout(game.rrTurnTimeout); game.rrTurnTimeout = null; }
 
-    // rrBullets = how many bullets are loaded (1 to 6)
-    // Chance of dying = rrBullets / 6
+    const pot = game.betAmount * game.players.length;
+    const isSelf = targetId === game.rrShooter;
     const shot = Math.random() < (game.rrBullets / 6);
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`rr_pull_${game.id}`)
-        .setLabel('Pull Trigger 🔫')
-        .setStyle(ButtonStyle.Danger),
-    );
-
     if (shot) {
-      // 💥 BANG — player is eliminated
-      game.rrActive.splice(game.rrCurrentIdx, 1);
+      // 💥 HIT — target is eliminated
+      game.rrActive = game.rrActive.filter(p => p !== targetId);
 
-      // Reset bullet count after a death
-      game.rrBullets = 1;
-
-      // Check if game is over
       if (game.rrActive.length === 1) {
         const winnerId = game.rrActive[0];
         await updateBalance(winnerId, pot);
@@ -452,54 +434,88 @@ async function handleButton(interaction) {
         const finalContent = [
           `🔫 **Russian Roulette — Game Over!**`,
           ``,
-          `💥 **BANG!** <@${currentPlayer}> pulled the trigger... and it fired!`,
+          `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — and it connected!`,
           ``,
           `🏆 <@${winnerId}> is the last survivor and wins **${pot}** coins!`,
         ].join('\n');
         if (msg) await msg.edit({ content: finalContent, components: [] });
         deleteGame(game.id);
-        return interaction.reply({ content: '💀 BANG! You have been eliminated.', flags: 64 });
+        return interaction.reply({ content: isSelf ? '💀 You shot yourself — eliminated!' : `💥 You eliminated <@${targetId}>! But you're alone now, game over.`, flags: 64 });
       }
 
-      // Wrap index if needed after removal
-      if (game.rrCurrentIdx >= game.rrActive.length) game.rrCurrentIdx = 0;
-      const nextPlayer = game.rrActive[game.rrCurrentIdx];
-
-      const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-      const content = [
-        `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
-        `Survivors: ${game.rrActive.map(p => `<@${p}>`).join(' → ')}`,
-        ``,
-        `💥 **BANG!** <@${currentPlayer}> pulled the trigger and is eliminated!`,
-        `*(Chamber reset — 1 bullet back in)*`,
-        ``,
-        `<@${nextPlayer}>, it's your turn — pull the trigger!`,
-      ].join('\n');
-      if (msg) await msg.edit({ content, components: [row] });
-
-      return interaction.reply({ content: '💀 BANG! You have been eliminated.', flags: 64 });
+      // New random turn — reset bullets
+      await doRRTurn(game, interaction.client, `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — eliminated!`);
+      return interaction.reply({ content: isSelf ? '💀 You shot yourself and were eliminated!' : `💥 <@${targetId}> was eliminated!`, flags: 64 });
 
     } else {
-      // *click* — empty, survive
-      // Increase bullet count (max 5 so there's always some RNG left)
-      game.rrBullets = Math.min(game.rrBullets + 1, 5);
+      // *click* — miss
+      if (isSelf) {
+        // Shooting yourself and surviving → increment bullets, keep same shooter
+        game.rrBullets = Math.min(game.rrBullets + 1, 5);
+        const guild = interaction.client.guilds.cache.get(game.guildId);
+        const bullets = game.rrBullets;
 
-      // Move to next player in order
-      game.rrCurrentIdx = (game.rrCurrentIdx + 1) % game.rrActive.length;
-      const nextPlayer = game.rrActive[game.rrCurrentIdx];
+        // Rebuild shoot buttons for same shooter
+        const buttons = [];
+        for (const pid of game.rrActive) {
+          let label = pid;
+          if (guild) {
+            try {
+              const member = await guild.members.fetch(pid);
+              label = (member.nickname || member.user.username).slice(0, 20);
+            } catch (_) {}
+          }
+          const isSelfBtn = pid === game.rrShooter;
+          buttons.push(
+            new ButtonBuilder()
+              .setCustomId(`rr_shoot_${game.id}_${pid}`)
+              .setLabel(isSelfBtn ? `🎯 ${label} (me)` : label)
+              .setStyle(isSelfBtn ? ButtonStyle.Danger : ButtonStyle.Secondary),
+          );
+        }
+        const rows = [];
+        for (let i = 0; i < buttons.length; i += 5) {
+          rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
+        }
 
-      const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-      const content = [
-        `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
-        `Survivors: ${game.rrActive.map(p => `<@${p}>`).join(' → ')}`,
-        ``,
-        `*click* — Empty barrel. <@${currentPlayer}> survives... for now.`,
-        ``,
-        `<@${nextPlayer}>, it's your turn — pull the trigger!`,
-      ].join('\n');
-      if (msg) await msg.edit({ content, components: [row] });
+        const survivors = game.rrActive.map(p => `<@${p}>`).join(', ');
+        const content = [
+          `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
+          `Survivors: ${survivors}`,
+          ``,
+          `*click* — <@${game.rrShooter}> shot themselves and survived! Chamber loaded: **${bullets}/6**`,
+          ``,
+          `<@${game.rrShooter}> — pick again! *(${15}s to decide)*`,
+        ].join('\n');
 
-      return interaction.reply({ content: '😅 Empty barrel — you survived!', flags: 64 });
+        const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
+        if (msg) await msg.edit({ content, components: rows });
+
+        // Reset 15s AFK timer for same shooter
+        if (game.rrTurnTimeout) clearTimeout(game.rrTurnTimeout);
+        game.rrTurnTimeout = setTimeout(async () => {
+          const g = getGame(game.id);
+          if (!g || g.status !== 'active' || g.rrShooter !== game.rrShooter) return;
+          const afkId = g.rrShooter;
+          g.rrActive = g.rrActive.filter(p => p !== afkId);
+          if (g.rrActive.length === 1) {
+            const winnerId = g.rrActive[0];
+            await updateBalance(winnerId, pot);
+            const afkMsg = await interaction.channel.messages.fetch(g.messageId).catch(() => null);
+            if (afkMsg) await afkMsg.edit({ content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond and is eliminated!\n\n🏆 <@${winnerId}> wins **${pot}** coins!`, components: [] });
+            deleteGame(g.id);
+            return;
+          }
+          await doRRTurn(g, interaction.client, `⏱️ <@${afkId}> took too long and has been kicked!`);
+        }, 15000);
+
+        return interaction.reply({ content: `😅 *click* — empty! You survived. Bullet count raised to **${bullets}/6**.`, flags: 64 });
+
+      } else {
+        // Shooting someone else and missing → new random turn (reset bullets)
+        await doRRTurn(game, interaction.client, `*click* — <@${game.rrShooter}> shot at <@${targetId}> and missed!`);
+        return interaction.reply({ content: `*click* — empty! <@${targetId}> survived.`, flags: 64 });
+      }
     }
   }
 
@@ -541,7 +557,6 @@ async function handleButton(interaction) {
     const others = game.players.filter(p => p !== game.potatoHolder);
     game.potatoHolder = others[Math.floor(Math.random() * others.length)];
 
-    const pot = game._totalPot;
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`hp_pass_${game.id}`).setLabel('Pass 🥔').setStyle(ButtonStyle.Primary),
     );
@@ -549,7 +564,7 @@ async function handleButton(interaction) {
     const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
     if (msg) {
       await msg.edit({
-        content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> now has the potato!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
+        content: `🥔 **Hot Potato!** Pot: **${game._totalPot}** coins\n<@${game.potatoHolder}> now has the potato!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
         components: [row],
       });
     }
@@ -579,11 +594,9 @@ async function handleModal(interaction) {
 
     if (role === 'target') {
       duel.targetNumber = raw;
-
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`numberduel_initpick_${duel.id}`).setLabel('Pick your number').setStyle(ButtonStyle.Primary),
       );
-
       const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
       if (msg) await msg.edit({ content: `🔢 <@${duel.targetId}> has submitted their number! <@${duel.initiatorId}>, click below to pick yours!`, components: [row] });
       return interaction.reply({ content: '✅ Your number is locked in!', flags: 64 });
@@ -591,7 +604,6 @@ async function handleModal(interaction) {
 
     if (role === 'initiator') {
       duel.initiatorNumber = raw;
-
       const botNumber = Math.floor(Math.random() * 10) + 1;
       const iDiff = Math.abs(duel.initiatorNumber - botNumber);
       const tDiff = Math.abs(duel.targetNumber - botNumber);
