@@ -4,63 +4,10 @@ const { getBalance, updateBalance } = require('../../utils/economy/shopManager.j
 
 const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
 
-async function startHotPotato(game, client) {
-  const channel = client.channels.cache.get(game.channelId);
-  if (!channel) return deleteGame(game.id);
-
-  game.status = 'active';
-  game.exploded = false;
-
-  // Pick a random starting holder
-  game.potatoHolder = game.players[Math.floor(Math.random() * game.players.length)];
-
-  // Hidden timer: 20–45 seconds
-  const explodeIn = Math.floor(Math.random() * 25000) + 20000;
-
-  const buildRow = (gameId) => new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`hp_pass_${gameId}`).setLabel('Pass 🥔').setStyle(ButtonStyle.Primary),
-  );
-
-  const pot = game.betAmount * game.players.length;
-  const msg = await channel.messages.fetch(game.messageId).catch(() => null);
-  if (msg) {
-    await msg.edit({
-      content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> is holding the potato — pass it before it explodes!\nPlayers: ${game.players.map(p => `<@${p}>`).join(', ')}`,
-      components: [buildRow(game.id)],
-    });
-  }
-
-  // Explosion timer
-  game.potatoTimeout = setTimeout(async () => {
-    const g = getGame(game.id);
-    if (!g || g.exploded) return; // already resolved, do nothing
-
-    g.exploded = true; // lock immediately to prevent race with pass handler
-
-    const loserId = g.potatoHolder;
-    const survivors = g.players.filter(p => p !== loserId);
-    const share = survivors.length > 0 ? Math.floor(pot / survivors.length) : 0;
-
-    for (const pid of survivors) {
-      await updateBalance(pid, share);
-    }
-
-    const explodeMsg = await channel.messages.fetch(g.messageId).catch(() => null);
-    if (explodeMsg) {
-      await explodeMsg.edit({
-        content: `💥 **BOOM!** <@${loserId}> was holding the potato and loses!\n${survivors.length > 0 ? `Each survivor receives **${share}** coins!` : ''}`,
-        components: [],
-      });
-    }
-
-    deleteGame(g.id);
-  }, explodeIn);
-}
-
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('hotpotato')
-    .setDescription('Start a hot potato game — last survivor wins')
+    .setDescription('Start a hot potato game — last survivor wins the pot')
     .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
 
   async execute(interaction) {
@@ -106,11 +53,15 @@ module.exports = {
         return;
       }
 
+      // Store total pot so it stays correct even as players get eliminated
+      g._totalPot = g.betAmount * g.players.length;
+
       if (origMsg) await origMsg.edit({ content: `🥔 **Hot Potato** — Lobby closed! Starting with **${g.players.length}** players...`, components: [] });
       await new Promise(r => setTimeout(r, 1500));
+
+      // Import here to avoid circular dependency
+      const { startHotPotato } = require('../../handlers/gameHandler.js');
       await startHotPotato(g, interaction.client);
     }, 30000);
   },
-
-  startHotPotato,
 };
