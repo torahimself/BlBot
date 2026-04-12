@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getBalance } = require('../../utils/economy/shopManager.js');
-const allowedChannels = ['1415933682748751923', '1464140979148689550'];
+const allowedChannels = ['1415933682748751923', '1464140979148689550', '1432459732358140106'];
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -8,7 +8,7 @@ module.exports = {
         .setDescription('Check your coin balance'),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
-            return interaction.editReply(`❌ This command can only be used in <#1415933682748751923> or <#1464140979148689550>.`);
+            return interaction.editReply(`❌ This command can only be used in <#1415933682748751923> or <#1464140979148689550> or <#1432459732358140106>.`);
         }
         const balance = await getBalance(interaction.user.id);
         await interaction.editReply(`💰 Your balance: **${balance}** coins.`);
