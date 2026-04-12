@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { createGame, getGame, deleteGame, isInGame, MAX_PLAYERS, MIN_PLAYERS, runRussianRoulette } = require('../../utils/economy/gameManager.js');
+const { createGame, getGame, deleteGame, isInGame, MAX_PLAYERS, MIN_PLAYERS, startRussianRoulette } = require('../../utils/economy/gameManager.js');
 const { getBalance, updateBalance } = require('../../utils/economy/shopManager.js');
 
 const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
@@ -7,7 +7,7 @@ const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('russianroulette')
-    .setDescription('Start a russian roulette game')
+    .setDescription('Start a russian roulette game — last survivor wins all')
     .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
 
   async execute(interaction) {
@@ -48,13 +48,14 @@ module.exports = {
 
       if (g.players.length < MIN_PLAYERS) {
         await updateBalance(hostId, bet);
-        if (origMsg) await origMsg.edit({ content: '❌ **Russian Roulette** cancelled — not enough players.', components: [] });
+        if (origMsg) await origMsg.edit({ content: '❌ **Russian Roulette** cancelled — not enough players joined.', components: [] });
         deleteGame(g.id);
         return;
       }
 
       if (origMsg) await origMsg.edit({ content: `🔫 **Russian Roulette** — Lobby closed! Starting with **${g.players.length}** players...`, components: [] });
-      runRussianRoulette(g, interaction.client);
+      await new Promise(r => setTimeout(r, 1500));
+      startRussianRoulette(g, interaction.client);
     }, 30000);
   },
 };
