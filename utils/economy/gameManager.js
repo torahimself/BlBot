@@ -12,10 +12,11 @@ function createGame(type, hostId, betAmount) {
     status: 'lobby',
     messageId: null, channelId: null,
     round: 0,
-    // Russian Roulette turn state
+    // Russian Roulette
     rrActive: [],
     rrCurrentIdx: 0,
-    // Hot Potato state
+    rrBullets: 1,       // starts at 1/6, increments on survive, resets on death
+    // Hot Potato
     potatoHolder: null,
     potatoTimeout: null,
     exploded: false,
@@ -77,7 +78,7 @@ async function runLMS(game, client) {
   deleteGame(game.id);
 }
 
-// Russian Roulette — sets up first turn, subsequent turns via buttons
+// Russian Roulette — sets up first turn
 async function startRussianRoulette(game, client) {
   const channel = client.channels.cache.get(game.channelId);
   if (!channel) return deleteGame(game.id);
@@ -85,6 +86,7 @@ async function startRussianRoulette(game, client) {
   game.status = 'active';
   game.rrActive = [...game.players];
   game.rrCurrentIdx = 0;
+  game.rrBullets = 1;
 
   const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
   const pot = game.betAmount * game.players.length;
@@ -98,7 +100,13 @@ async function startRussianRoulette(game, client) {
   );
 
   const msg = await channel.messages.fetch(game.messageId).catch(() => null);
-  const content = `🔫 **Russian Roulette** — Pot: **${pot}** coins\nSurvivors: ${game.rrActive.map(p => `<@${p}>`).join(', ')}\n\n<@${currentPlayer}>, it's your turn — pull the trigger!`;
+  const content = [
+    `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
+    `Players: ${game.rrActive.map(p => `<@${p}>`).join(' → ')}`,
+    ``,
+    `<@${currentPlayer}>, it's your turn — pull the trigger!`,
+  ].join('\n');
+
   if (msg) await msg.edit({ content, components: [row] });
   else {
     const sent = await channel.send({ content, components: [row] });
