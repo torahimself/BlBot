@@ -2,7 +2,7 @@ const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = re
 const { createDuel, isInDuel } = require('../../utils/economy/duelManager.js');
 const { getBalance } = require('../../utils/economy/shopManager.js');
 
-const ALLOWED_CHANNELS = ['1415933682748751923'];
+const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
 
 function createDeck() {
   const suits = ['♠', '♥', '♦', '♣'];
