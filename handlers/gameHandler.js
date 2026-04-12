@@ -14,7 +14,6 @@ function handValue(hand) {
 
 function drawCard(duel) { return duel.deck.pop(); }
 
-// Public message — shows only card count and status, no actual cards
 function buildBJPublicContent(duel) {
   const iId = duel.initiatorId;
   const tId = duel.targetId;
@@ -22,7 +21,6 @@ function buildBJPublicContent(duel) {
   const tStatus = duel.busted[tId] ? '💀 Bust' : duel.standing[tId] ? '🛑 Stand' : '🃏 Playing';
   const iCards = duel.hands[iId].length;
   const tCards = duel.hands[tId].length;
-
   return [
     `🃏 **Blackjack Duel** — Bet: **${duel.amount}** coins each`,
     `<@${iId}>: 🂠 ${iCards} card${iCards !== 1 ? 's' : ''} — ${iStatus}`,
@@ -30,7 +28,6 @@ function buildBJPublicContent(duel) {
   ].join('\n');
 }
 
-// Private reply — shows a player their actual hand
 function buildBJPrivateContent(duel, playerId) {
   const hand = duel.hands[playerId];
   const val = handValue(hand);
@@ -87,7 +84,6 @@ async function resolveBJ(duel, channel) {
     resultLine = `Tie! Both had **${iVal}**. Bets refunded.`;
   }
 
-  // Reveal both hands publicly at the end
   const finalContent = [
     `🃏 **Blackjack Duel — Results**`,
     `<@${iId}>: ${iCards} **(${iVal})**${iBust ? ' 💀 Bust' : ''}`,
@@ -99,8 +95,82 @@ async function resolveBJ(duel, channel) {
   const msg = await channel.messages.fetch(duel.messageId).catch(() => null);
   if (msg) await msg.edit({ content: finalContent, components: [] });
   else await channel.send(finalContent);
-
   deleteDuel(duel.id);
+}
+
+// ─── Hot Potato helpers ───────────────────────────────────────────────────────
+
+// Starts (or restarts after an elimination) the potato timer for remaining players
+async function startHotPotato(game, client) {
+  const channel = client.channels.cache.get(game.channelId);
+  if (!channel) return deleteGame(game.id);
+
+  game.status = 'active';
+  game.exploded = false;
+
+  // Pick random holder from remaining players
+  game.potatoHolder = game.players[Math.floor(Math.random() * game.players.length)];
+
+  // Hidden timer: 20–45 seconds
+  const explodeIn = Math.floor(Math.random() * 25000) + 20000;
+  const pot = game.betAmount * game.players.length; // original pot (all players paid in at start)
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`hp_pass_${game.id}`).setLabel('Pass 🥔').setStyle(ButtonStyle.Primary),
+  );
+
+  const msg = await channel.messages.fetch(game.messageId).catch(() => null);
+  if (msg) {
+    await msg.edit({
+      content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> is holding the potato — pass it before it explodes!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
+      components: [row],
+    });
+  }
+
+  // Set explosion timer
+  game.potatoTimeout = setTimeout(async () => {
+    const g = getGame(game.id);
+    if (!g || g.exploded) return; // already resolved
+
+    g.exploded = true; // lock immediately
+
+    const loserId = g.potatoHolder;
+    g.players = g.players.filter(p => p !== loserId); // eliminate from players list
+
+    const ch = client.channels.cache.get(g.channelId);
+    if (!ch) return deleteGame(g.id);
+
+    // If only 1 player left — that player wins the full pot
+    if (g.players.length === 1) {
+      const winnerId = g.players[0];
+      const fullPot = g.betAmount * (g.players.length + 1 + (g._eliminated || 0)); // total everyone paid
+      // Simpler: just pay out the remaining tracked pot
+      await updateBalance(winnerId, g._totalPot);
+
+      const finalMsg = await ch.messages.fetch(g.messageId).catch(() => null);
+      if (finalMsg) {
+        await finalMsg.edit({
+          content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\n\n🏆 <@${winnerId}> is the last one standing and wins **${g._totalPot}** coins!`,
+          components: [],
+        });
+      }
+      deleteGame(g.id);
+      return;
+    }
+
+    // More than 1 player left — announce elimination and restart
+    const elimMsg = await ch.messages.fetch(g.messageId).catch(() => null);
+    if (elimMsg) {
+      await elimMsg.edit({
+        content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\nRemaining: ${g.players.map(p => `<@${p}>`).join(', ')}\n\n🥔 Picking a new holder...`,
+        components: [],
+      });
+    }
+
+    // Short pause then restart
+    await new Promise(r => setTimeout(r, 2500));
+    await startHotPotato(g, client);
+  }, explodeIn);
 }
 
 // ─── Main button handler ──────────────────────────────────────────────────────
@@ -130,7 +200,6 @@ async function handleButton(interaction) {
       return interaction.reply({ content: '❌ You no longer have enough coins.', flags: 64 });
     }
 
-    // Ask initiator to pick Heads or Tails
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`coinflip_heads_${duel.id}`).setLabel('Heads').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId(`coinflip_tails_${duel.id}`).setLabel('Tails').setStyle(ButtonStyle.Secondary),
@@ -156,15 +225,13 @@ async function handleButton(interaction) {
 
     duel.initiatorSide = isHeads ? 'Heads' : 'Tails';
 
-    // Deduct and flip
     await updateBalance(duel.initiatorId, -duel.amount);
     await updateBalance(duel.targetId, -duel.amount);
 
-    const flip = Math.random() < 0.5; // true = Heads
+    const flip = Math.random() < 0.5;
     const flipResult = flip ? 'Heads' : 'Tails';
-    const initiatorWins = (duel.initiatorSide === flipResult);
+    const initiatorWins = duel.initiatorSide === flipResult;
     const winnerId = initiatorWins ? duel.initiatorId : duel.targetId;
-    const loserId = initiatorWins ? duel.targetId : duel.initiatorId;
     const prize = duel.amount * 2;
 
     await updateBalance(winnerId, prize);
@@ -248,27 +315,20 @@ async function handleButton(interaction) {
     await updateBalance(duel.initiatorId, -duel.amount);
     await updateBalance(duel.targetId, -duel.amount);
 
-    // Deal 2 cards each
     duel.hands[duel.initiatorId].push(drawCard(duel), drawCard(duel));
     duel.hands[duel.targetId].push(drawCard(duel), drawCard(duel));
 
-    // Update public message (hidden hands)
     const publicContent = buildBJPublicContent(duel);
     const rows = buildBJRows(duel);
     const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
     if (msg) await msg.edit({ content: publicContent, components: rows });
 
-    // Show each player their hand privately
     await interaction.reply({ content: buildBJPrivateContent(duel, duel.targetId), flags: 64 });
 
-    // Also DM the initiator their hand
     try {
       const initiator = await interaction.client.users.fetch(duel.initiatorId);
-      await initiator.send(buildBJPrivateContent(duel, duel.initiatorId) + `\n\n*(Use the Hit/Stand buttons in <#${duel.channelId}> to play)*`);
-    } catch (_) {
-      // DMs disabled — send ephemeral in channel instead via a follow-up is not possible here,
-      // but they'll see their hand on first hit/stand anyway
-    }
+      await initiator.send(buildBJPrivateContent(duel, duel.initiatorId) + `\n\n*(Use Hit/Stand buttons in <#${duel.channelId}>)*`);
+    } catch (_) {}
 
     return;
   }
@@ -287,10 +347,8 @@ async function handleButton(interaction) {
     if (duel.standing[playerId] || duel.busted[playerId]) return interaction.reply({ content: '❌ You already finished your turn.', flags: 64 });
 
     if (isHit) {
-      const card = drawCard(duel);
-      duel.hands[playerId].push(card);
-      const val = handValue(duel.hands[playerId]);
-      if (val > 21) duel.busted[playerId] = true;
+      duel.hands[playerId].push(drawCard(duel));
+      if (handValue(duel.hands[playerId]) > 21) duel.busted[playerId] = true;
     } else {
       duel.standing[playerId] = true;
     }
@@ -298,19 +356,12 @@ async function handleButton(interaction) {
     const bothDone = (duel.standing[duel.initiatorId] || duel.busted[duel.initiatorId]) &&
                      (duel.standing[duel.targetId] || duel.busted[duel.targetId]);
 
-    // Update public message
     const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
-    const publicContent = buildBJPublicContent(duel);
-    const rows = buildBJRows(duel);
-    if (msg) await msg.edit({ content: publicContent, components: rows });
+    if (msg) await msg.edit({ content: buildBJPublicContent(duel), components: buildBJRows(duel) });
 
-    // Reply ephemerally with their private hand
     await interaction.reply({ content: buildBJPrivateContent(duel, playerId), flags: 64 });
 
-    if (bothDone) {
-      await resolveBJ(duel, interaction.channel);
-    }
-
+    if (bothDone) await resolveBJ(duel, interaction.channel);
     return;
   }
 
@@ -318,7 +369,7 @@ async function handleButton(interaction) {
   if (id.startsWith('lms_join_')) {
     const gameId = id.slice('lms_join_'.length);
     const game = getGame(gameId);
-    const { MAX_PLAYERS, runLMS } = require('../utils/economy/gameManager.js');
+    const { MAX_PLAYERS } = require('../utils/economy/gameManager.js');
 
     if (!game || game.status !== 'lobby') return interaction.reply({ content: '❌ This game is no longer accepting players.', flags: 64 });
     if (game.players.includes(interaction.user.id)) return interaction.reply({ content: '❌ You already joined.', flags: 64 });
@@ -334,7 +385,7 @@ async function handleButton(interaction) {
     const playerList = game.players.map(p => `<@${p}>`).join(', ');
     if (msg) await msg.edit({ content: `🎲 **Last Man Standing** — Bet: **${game.betAmount}** coins/player\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
 
-    return interaction.reply({ content: '✅ You joined the game!', flags: 64 });
+    return interaction.reply({ content: '✅ You joined!', flags: 64 });
   }
 
   // ── Russian Roulette: Join ────────────────────────────────────────────────
@@ -373,13 +424,26 @@ async function handleButton(interaction) {
     }
 
     const pot = game.betAmount * game.players.length;
-    const shot = Math.random() < (1 / 6);
+
+    // rrBullets = how many bullets are loaded (1 to 6)
+    // Chance of dying = rrBullets / 6
+    const shot = Math.random() < (game.rrBullets / 6);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`rr_pull_${game.id}`)
+        .setLabel('Pull Trigger 🔫')
+        .setStyle(ButtonStyle.Danger),
+    );
 
     if (shot) {
-      // BANG — eliminate this player
+      // 💥 BANG — player is eliminated
       game.rrActive.splice(game.rrCurrentIdx, 1);
 
-      // If only 1 left — game over
+      // Reset bullet count after a death
+      game.rrBullets = 1;
+
+      // Check if game is over
       if (game.rrActive.length === 1) {
         const winnerId = game.rrActive[0];
         await updateBalance(winnerId, pot);
@@ -387,49 +451,47 @@ async function handleButton(interaction) {
         const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
         const finalContent = [
           `🔫 **Russian Roulette — Game Over!**`,
-          `💥 **BANG!** <@${currentPlayer}> pulled the trigger and is eliminated!`,
+          ``,
+          `💥 **BANG!** <@${currentPlayer}> pulled the trigger... and it fired!`,
           ``,
           `🏆 <@${winnerId}> is the last survivor and wins **${pot}** coins!`,
         ].join('\n');
         if (msg) await msg.edit({ content: finalContent, components: [] });
         deleteGame(game.id);
-        return interaction.reply({ content: '💀 BANG!', flags: 64 });
+        return interaction.reply({ content: '💀 BANG! You have been eliminated.', flags: 64 });
       }
 
-      // Wrap index if needed
+      // Wrap index if needed after removal
       if (game.rrCurrentIdx >= game.rrActive.length) game.rrCurrentIdx = 0;
-
       const nextPlayer = game.rrActive[game.rrCurrentIdx];
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`rr_pull_${game.id}`).setLabel('Pull Trigger 🔫').setStyle(ButtonStyle.Danger),
-      );
 
       const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
       const content = [
         `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
-        `Survivors: ${game.rrActive.map(p => `<@${p}>`).join(', ')}`,
+        `Survivors: ${game.rrActive.map(p => `<@${p}>`).join(' → ')}`,
         ``,
-        `💥 **BANG!** <@${currentPlayer}> is eliminated!`,
+        `💥 **BANG!** <@${currentPlayer}> pulled the trigger and is eliminated!`,
+        `*(Chamber reset — 1 bullet back in)*`,
         ``,
         `<@${nextPlayer}>, it's your turn — pull the trigger!`,
       ].join('\n');
       if (msg) await msg.edit({ content, components: [row] });
 
-      return interaction.reply({ content: '💀 BANG! You\'ve been eliminated.', flags: 64 });
+      return interaction.reply({ content: '💀 BANG! You have been eliminated.', flags: 64 });
 
     } else {
-      // Click — empty barrel, survive and pass to next
+      // *click* — empty, survive
+      // Increase bullet count (max 5 so there's always some RNG left)
+      game.rrBullets = Math.min(game.rrBullets + 1, 5);
+
+      // Move to next player in order
       game.rrCurrentIdx = (game.rrCurrentIdx + 1) % game.rrActive.length;
       const nextPlayer = game.rrActive[game.rrCurrentIdx];
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`rr_pull_${game.id}`).setLabel('Pull Trigger 🔫').setStyle(ButtonStyle.Danger),
-      );
 
       const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
       const content = [
         `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
-        `Survivors: ${game.rrActive.map(p => `<@${p}>`).join(', ')}`,
+        `Survivors: ${game.rrActive.map(p => `<@${p}>`).join(' → ')}`,
         ``,
         `*click* — Empty barrel. <@${currentPlayer}> survives... for now.`,
         ``,
@@ -469,7 +531,6 @@ async function handleButton(interaction) {
     const gameId = id.slice('hp_pass_'.length);
     const game = getGame(gameId);
 
-    // Check exploded lock first — prevents race condition with timer
     if (!game || game.status !== 'active' || game.exploded) {
       return interaction.reply({ content: '💥 The potato already exploded!', flags: 64 });
     }
@@ -480,7 +541,7 @@ async function handleButton(interaction) {
     const others = game.players.filter(p => p !== game.potatoHolder);
     game.potatoHolder = others[Math.floor(Math.random() * others.length)];
 
-    const pot = game.betAmount * game.players.length;
+    const pot = game._totalPot;
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`hp_pass_${game.id}`).setLabel('Pass 🥔').setStyle(ButtonStyle.Primary),
     );
@@ -488,7 +549,7 @@ async function handleButton(interaction) {
     const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
     if (msg) {
       await msg.edit({
-        content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> now has the potato!\nPlayers: ${game.players.map(p => `<@${p}>`).join(', ')}`,
+        content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> now has the potato!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
         components: [row],
       });
     }
@@ -525,7 +586,6 @@ async function handleModal(interaction) {
 
       const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
       if (msg) await msg.edit({ content: `🔢 <@${duel.targetId}> has submitted their number! <@${duel.initiatorId}>, click below to pick yours!`, components: [row] });
-
       return interaction.reply({ content: '✅ Your number is locked in!', flags: 64 });
     }
 
@@ -559,4 +619,4 @@ async function handleModal(interaction) {
   }
 }
 
-module.exports = { handleButton, handleModal };
+module.exports = { handleButton, handleModal, startHotPotato };
