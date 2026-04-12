@@ -9,38 +9,33 @@ async function startHotPotato(game, client) {
   if (!channel) return deleteGame(game.id);
 
   game.status = 'active';
-  const pot = game.betAmount * game.players.length;
+  game.exploded = false;
 
   // Pick a random starting holder
   game.potatoHolder = game.players[Math.floor(Math.random() * game.players.length)];
 
-  // Hidden timer: 15-40 seconds
-  const explodeIn = Math.floor(Math.random() * 26000) + 15000;
+  // Hidden timer: 20–45 seconds
+  const explodeIn = Math.floor(Math.random() * 25000) + 20000;
 
-  const buildPotatoMessage = () => {
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`hp_pass_${game.id}`)
-        .setLabel('Pass 🥔')
-        .setStyle(ButtonStyle.Primary),
-    );
-    return {
-      content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> is holding the potato! Pass it before it explodes!\nPlayers: ${game.players.map(p => `<@${p}>`).join(', ')}`,
-      components: [row],
-    };
-  };
+  const buildRow = (gameId) => new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`hp_pass_${gameId}`).setLabel('Pass 🥔').setStyle(ButtonStyle.Primary),
+  );
 
-  // Edit lobby message to show potato
-  const origMsg = await channel.messages.fetch(game.messageId).catch(() => null);
-  if (origMsg) await origMsg.edit(buildPotatoMessage());
+  const pot = game.betAmount * game.players.length;
+  const msg = await channel.messages.fetch(game.messageId).catch(() => null);
+  if (msg) {
+    await msg.edit({
+      content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> is holding the potato — pass it before it explodes!\nPlayers: ${game.players.map(p => `<@${p}>`).join(', ')}`,
+      components: [buildRow(game.id)],
+    });
+  }
 
-  game.buildPotatoMessage = buildPotatoMessage;
-  game.channel = channel;
-
-  // Set the explosion timer
+  // Explosion timer
   game.potatoTimeout = setTimeout(async () => {
     const g = getGame(game.id);
-    if (!g) return;
+    if (!g || g.exploded) return; // already resolved, do nothing
+
+    g.exploded = true; // lock immediately to prevent race with pass handler
 
     const loserId = g.potatoHolder;
     const survivors = g.players.filter(p => p !== loserId);
@@ -50,10 +45,10 @@ async function startHotPotato(game, client) {
       await updateBalance(pid, share);
     }
 
-    const msg = await channel.messages.fetch(g.messageId).catch(() => null);
-    if (msg) {
-      await msg.edit({
-        content: `💥 **BOOM!** <@${loserId}> was holding the potato and loses!\n${survivors.length > 0 ? `Survivors each receive **${share}** coins!` : ''}`,
+    const explodeMsg = await channel.messages.fetch(g.messageId).catch(() => null);
+    if (explodeMsg) {
+      await explodeMsg.edit({
+        content: `💥 **BOOM!** <@${loserId}> was holding the potato and loses!\n${survivors.length > 0 ? `Each survivor receives **${share}** coins!` : ''}`,
         components: [],
       });
     }
@@ -65,7 +60,7 @@ async function startHotPotato(game, client) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('hotpotato')
-    .setDescription('Start a hot potato game')
+    .setDescription('Start a hot potato game — last survivor wins')
     .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
 
   async execute(interaction) {
@@ -106,12 +101,13 @@ module.exports = {
 
       if (g.players.length < MIN_PLAYERS) {
         await updateBalance(hostId, bet);
-        if (origMsg) await origMsg.edit({ content: '❌ **Hot Potato** cancelled — not enough players.', components: [] });
+        if (origMsg) await origMsg.edit({ content: '❌ **Hot Potato** cancelled — not enough players joined.', components: [] });
         deleteGame(g.id);
         return;
       }
 
       if (origMsg) await origMsg.edit({ content: `🥔 **Hot Potato** — Lobby closed! Starting with **${g.players.length}** players...`, components: [] });
+      await new Promise(r => setTimeout(r, 1500));
       await startHotPotato(g, interaction.client);
     }, 30000);
   },
