@@ -10,17 +10,19 @@ function createGame(type, hostId, betAmount) {
     id, type, hostId, betAmount,
     players: [hostId],
     status: 'lobby',
-    messageId: null, channelId: null,
+    messageId: null, channelId: null, guildId: null,
     round: 0,
     // Russian Roulette
-    rrActive: [],
-    rrCurrentIdx: 0,
-    rrBullets: 1,       // starts at 1/6, increments on survive, resets on death
+    rrActive: [],        // surviving player IDs
+    rrShooter: null,     // current shooter ID (random each round)
+    rrBullets: 1,        // bullet count, increments on miss, resets on kill
+    rrTurnTimeout: null, // 15s AFK timeout for current shooter
     // Hot Potato
     potatoHolder: null,
     potatoTimeout: null,
     exploded: false,
     _lobbyTimeout: null,
+    _totalPot: 0,
   };
   games.set(id, game);
   return game;
@@ -33,6 +35,7 @@ function deleteGame(id) {
   if (g) {
     if (g.potatoTimeout) clearTimeout(g.potatoTimeout);
     if (g._lobbyTimeout) clearTimeout(g._lobbyTimeout);
+    if (g.rrTurnTimeout) clearTimeout(g.rrTurnTimeout);
     games.delete(id);
   }
 }
@@ -78,44 +81,91 @@ async function runLMS(game, client) {
   deleteGame(game.id);
 }
 
-// Russian Roulette — sets up first turn
-async function startRussianRoulette(game, client) {
+// Russian Roulette — picks a random shooter and shows shoot buttons
+// Called at game start and after each death/AFK kick
+async function doRRTurn(game, client, extraLine = null) {
   const channel = client.channels.cache.get(game.channelId);
   if (!channel) return deleteGame(game.id);
 
-  game.status = 'active';
-  game.rrActive = [...game.players];
-  game.rrCurrentIdx = 0;
-  game.rrBullets = 1;
+  // Pick a random shooter from survivors
+  game.rrShooter = game.rrActive[Math.floor(Math.random() * game.rrActive.length)];
+  game.rrBullets = 1; // reset on every new turn assignment
 
-  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
   const pot = game.betAmount * game.players.length;
-  const currentPlayer = game.rrActive[0];
+  const guild = client.guilds.cache.get(game.guildId);
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`rr_pull_${game.id}`)
-      .setLabel('Pull Trigger 🔫')
-      .setStyle(ButtonStyle.Danger),
-  );
+  // Build buttons — one per survivor (including self)
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  const buttons = [];
+  for (const pid of game.rrActive) {
+    let label = pid; // fallback to ID
+    if (guild) {
+      try {
+        const member = await guild.members.fetch(pid);
+        label = (member.nickname || member.user.username).slice(0, 20);
+      } catch (_) {}
+    }
+    const isSelf = pid === game.rrShooter;
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`rr_shoot_${game.id}_${pid}`)
+        .setLabel(isSelf ? `🎯 ${label} (me)` : label)
+        .setStyle(isSelf ? ButtonStyle.Danger : ButtonStyle.Secondary),
+    );
+  }
+
+  // Discord allows max 5 per row, max 5 rows
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
+  }
+
+  const survivors = game.rrActive.map(p => `<@${p}>`).join(', ');
+  const lines = [
+    `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
+    `Survivors: ${survivors}`,
+    ``,
+  ];
+  if (extraLine) lines.push(extraLine, ``);
+  lines.push(`<@${game.rrShooter}> — pick who to shoot! *(1/${6} chance — 15s to decide)*`);
 
   const msg = await channel.messages.fetch(game.messageId).catch(() => null);
-  const content = [
-    `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
-    `Players: ${game.rrActive.map(p => `<@${p}>`).join(' → ')}`,
-    ``,
-    `<@${currentPlayer}>, it's your turn — pull the trigger!`,
-  ].join('\n');
+  if (msg) await msg.edit({ content: lines.join('\n'), components: rows });
 
-  if (msg) await msg.edit({ content, components: [row] });
-  else {
-    const sent = await channel.send({ content, components: [row] });
-    game.messageId = sent.id;
-  }
+  // 15 second AFK timeout — auto-eliminate the shooter if they don't act
+  if (game.rrTurnTimeout) clearTimeout(game.rrTurnTimeout);
+  game.rrTurnTimeout = setTimeout(async () => {
+    const g = getGame(game.id);
+    if (!g || g.status !== 'active') return;
+    if (g.rrShooter !== game.rrShooter) return; // turn already moved on
+
+    const afkId = g.rrShooter;
+    g.rrActive = g.rrActive.filter(p => p !== afkId);
+
+    if (g.rrActive.length === 1) {
+      const winnerId = g.rrActive[0];
+      await updateBalance(winnerId, pot);
+      const afkMsg = await channel.messages.fetch(g.messageId).catch(() => null);
+      if (afkMsg) await afkMsg.edit({
+        content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond in time and is eliminated!\n\n🏆 <@${winnerId}> wins **${pot}** coins!`,
+        components: [],
+      });
+      deleteGame(g.id);
+      return;
+    }
+
+    await doRRTurn(g, client, `⏱️ <@${afkId}> took too long and has been kicked from the game!`);
+  }, 15000);
+}
+
+async function startRussianRoulette(game, client) {
+  game.status = 'active';
+  game.rrActive = [...game.players];
+  await doRRTurn(game, client);
 }
 
 module.exports = {
   createGame, getGame, deleteGame, isInGame,
-  runLMS, startRussianRoulette,
+  runLMS, startRussianRoulette, doRRTurn,
   games, MAX_PLAYERS, MIN_PLAYERS,
 };
