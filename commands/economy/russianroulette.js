@@ -27,6 +27,7 @@ module.exports = {
 
     const game = createGame('rr', hostId, bet);
     game.channelId = interaction.channelId;
+    game.guildId = interaction.guildId; // needed to fetch member nicknames
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`rr_join_${game.id}`).setLabel('Join Game').setStyle(ButtonStyle.Danger),
