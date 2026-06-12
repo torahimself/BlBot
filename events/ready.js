@@ -4,6 +4,8 @@ const commandHandler = require('../handlers/commandHandler');
 const rotationSystem = require('../utils/rotationSystem');
 const AttachmentCounter = require('../utils/attachmentCounter');
 const ReportGenerator = require('../utils/reportGenerator');
+const StatpScanner = require('../utils/statpScanner');
+const StatpReportGenerator = require('../utils/statpReportGenerator');
 const Scheduler = require('../utils/scheduler');
 const { checkExpiredRoles } = require('../utils/economy/shopManager.js');
 const { seedVoiceUsers } = require('../utils/economy/voiceTracker.js');
@@ -37,14 +39,25 @@ module.exports = {
       console.error('❌ Error starting rotation system:', error);
     }
 
-    // Start attachment counter system
+    // Start attachment counter + statp systems
     try {
-      const attachmentCounter = new AttachmentCounter(client);
-      const reportGenerator = new ReportGenerator(client);
-      const scheduler = new Scheduler(client, attachmentCounter, reportGenerator, config);
+      const attachmentCounter   = new AttachmentCounter(client);
+      const reportGenerator     = new ReportGenerator(client);
+      const statpScanner        = new StatpScanner(client);
+      const statpReportGenerator = new StatpReportGenerator(client);
+
+      const scheduler = new Scheduler(
+        client,
+        attachmentCounter,
+        reportGenerator,
+        statpScanner,
+        statpReportGenerator,
+        config
+      );
+
       client.scheduler = scheduler;
-      scheduler.scheduleWeeklyReport();
-      console.log('📊 Attachment counter system activated');
+      scheduler.scheduleReports(); // schedules both monthly jobs
+      console.log('📊 Attachment counter & statp systems activated (monthly, 1st of each month, 1 AM Riyadh)');
     } catch (error) {
       console.error('❌ Error starting attachment counter system:', error);
     }
