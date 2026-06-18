@@ -50,19 +50,20 @@ module.exports = {
 
   // Statp system config — targeted monthly per-member report
   statp: {
-    // Specific channels to scan
-    channels: [
-      "1364390818970079272",
-      "1364717468781908159",
-      "1364663053039435786",
-      "1428049269360955463",
-      "1428050046590390313",
-      "1357350344681717940",
-      "1428052930837090334",
-      "1357525159279333557"
+    // No explicit channel list needed — scanning by categories below
+    channels: [],
+    // Categories to scan (all text + forum channels inside each will be scanned)
+    categories: [
+      "1358456147191005336",  // original working category
+      // "REPLACE_WITH_NEW_CATEGORY_ID", // ← ADD THE NEW CATEGORY ID HERE
     ],
-    // Category to also scan (all text channels inside it)
-    category: "1358456147191005336",
+    // Channels to exclude even if they're inside a scanned category
+    excludedChannels: [
+      "1390114909634957312",
+      "1409520434466263100",
+      "1364197015378198528",
+      "1437817609587523674",
+    ],
     // Only scan members who have this role
     trackedRole: "1407774752319344763",
     // Where to send the monthly statp report
