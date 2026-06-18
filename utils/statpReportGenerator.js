@@ -39,23 +39,28 @@ class StatpReportGenerator {
 
     // --- Channel breakdown (only channels with at least 1 item) ---
     if (userData.channels && userData.channels.size > 0) {
-      const lines = [];
+      // Use a Map to aggregate: multiple threads in the same forum → one line
+      const aggregated = new Map(); // display label → total count
 
       for (const [channelKey, count] of userData.channels) {
         if (count <= 0) continue;
 
         let display;
         if (channelKey.startsWith('forum-')) {
-          // forum-{forumId}-{threadId}
+          // forum-{forumId}-{threadId} — group all threads under the forum name
           const forumId = channelKey.split('-')[1];
           const forum = this.client.channels.cache.get(forumId);
-          display = forum ? `🏛️ ${forum.name}` : `Forum (${forumId})`;
+          display = forum ? `🏛️ ${forum.name}` : `🏛️ Forum (${forumId})`;
         } else {
           display = `<#${channelKey}>`;
         }
 
-        lines.push({ display, count });
+        aggregated.set(display, (aggregated.get(display) || 0) + count);
       }
+
+      // Convert to sorted array
+      const lines = Array.from(aggregated.entries())
+        .map(([display, count]) => ({ display, count }));
 
       // Sort highest → lowest
       lines.sort((a, b) => b.count - a.count);
