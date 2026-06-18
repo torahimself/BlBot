@@ -1,9 +1,9 @@
 const AttachmentCounter = require('./attachmentCounter');
 
 /**
- * StatpScanner — scans a fixed set of channels + one category,
- * filtered to members with a single specific role, for the current month.
- * Inherits all message-scanning logic from AttachmentCounter.
+ * StatpScanner — scans one or more categories (with exclusions),
+ * filtered to members with a specific role, for the current month.
+ * Inherits all message/forum scanning logic from AttachmentCounter.
  */
 class StatpScanner extends AttachmentCounter {
   constructor(client) {
@@ -11,28 +11,38 @@ class StatpScanner extends AttachmentCounter {
     this.statpChannelsCache = [];
   }
 
-  // Build the full list of channel IDs for the statp scan
+  // Build the full deduplicated list of channel IDs for the statp scan
   getStatpChannels(config) {
     if (this.statpChannelsCache.length > 0) return this.statpChannelsCache;
 
-    // Start with the explicit channel list
-    const channels = [...config.statp.channels];
+    const exclusions = config.statp.excludedChannels || [];
+    const channels = [];
 
-    // Add all text channels from the specified category
-    const category = this.client.channels.cache.get(config.statp.category);
-    if (category && category.type === 4) { // GUILD_CATEGORY
+    // Scan every category in the list
+    const categoryIds = config.statp.categories || [];
+    for (const categoryId of categoryIds) {
+      const category = this.client.channels.cache.get(categoryId);
+      if (!category || category.type !== 4) {
+        console.log(`⚠️ [Statp] Category not found or not a category: ${categoryId}`);
+        continue;
+      }
+
       const catChannels = category.children.cache
-        .filter(ch => ch.isTextBased() && !ch.isThread())
+        .filter(ch =>
+          // Include text channels, forum channels (15), and media channels (16)
+          (ch.isTextBased() || ch.type === 15 || ch.type === 16) &&
+          !ch.isThread() &&
+          !exclusions.includes(ch.id)
+        )
         .map(ch => ch.id);
+
+      console.log(`📂 [Statp] Category "${category.name}": ${catChannels.length} channels added`);
       channels.push(...catChannels);
-      console.log(`📂 [Statp] Added ${catChannels.length} channels from category: ${category.name}`);
-    } else {
-      console.log(`⚠️ [Statp] Category not found or invalid: ${config.statp.category}`);
     }
 
     // Deduplicate
     this.statpChannelsCache = [...new Set(channels)];
-    console.log(`📊 [Statp] Total channels to scan: ${this.statpChannelsCache.length}`);
+    console.log(`📊 [Statp] Total channels to scan: ${this.statpChannelsCache.length} (excluded: ${exclusions.length} IDs)`);
     return this.statpChannelsCache;
   }
 
@@ -55,11 +65,13 @@ class StatpScanner extends AttachmentCounter {
 
       const channel = this.client.channels.cache.get(channelId);
       if (!channel) {
-        console.log(`❌ [Statp] Channel not found: ${channelId}`);
+        console.log(`❌ [Statp] Channel not in cache: ${channelId}`);
         continue;
       }
 
-      console.log(`🔍 [Statp] Scanning: ${channel.name}`);
+      const typeLabel = channel.type === 15 ? 'forum' : channel.type === 16 ? 'media' : 'text';
+      console.log(`🔍 [Statp] Scanning ${typeLabel}: ${channel.name}`);
+
       const channelStats = await this.scanChannel(channel, trackedRoles, sinceDate);
 
       for (const [userId, userData] of channelStats) {
