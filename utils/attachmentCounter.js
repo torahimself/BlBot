@@ -21,7 +21,7 @@ class AttachmentCounter {
       const category = this.client.channels.cache.get(categoryId);
       if (category && category.type === 4) { // GUILD_CATEGORY
         const categoryChannels = category.children.cache
-          .filter(ch => ch.isTextBased() && !ch.isThread())
+          .filter(ch => (ch.isTextBased() || ch.type === 15 || ch.type === 16) && !ch.isThread())
           .map(ch => ch.id);
         allChannels.push(...categoryChannels);
         console.log(`📂 Added ${categoryChannels.length} channels from category: ${category.name}`);
@@ -164,17 +164,37 @@ class AttachmentCounter {
 
     try {
       const activeThreads = await forumChannel.threads.fetchActive();
-      const archivedThreads = await forumChannel.threads.fetchArchived({ limit: 50 });
       
       const allThreads = new Collection();
       activeThreads.threads.forEach(thread => allThreads.set(thread.id, thread));
-      archivedThreads.threads.forEach(thread => allThreads.set(thread.id, thread));
+
+      // Paginate archived threads — keep fetching until we go past sinceDate
+      let before = undefined;
+      let keepFetching = true;
+      while (keepFetching) {
+        const archivedBatch = await forumChannel.threads.fetchArchived({ limit: 100, before });
+        if (archivedBatch.threads.size === 0) { keepFetching = false; break; }
+
+        let oldestInBatch = null;
+        for (const [, thread] of archivedBatch.threads) {
+          allThreads.set(thread.id, thread);
+          if (!oldestInBatch || thread.createdAt < oldestInBatch.createdAt) {
+            oldestInBatch = thread;
+          }
+        }
+
+        // Stop paginating once oldest thread is older than our sinceDate
+        if (oldestInBatch && oldestInBatch.createdAt < sinceDate) keepFetching = false;
+        else before = oldestInBatch?.id;
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
 
       console.log(`📂 Found ${allThreads.size} threads in forum ${forumChannel.name}`);
 
       for (const [threadId, thread] of allThreads) {
-        if (thread.createdAt < sinceDate) continue;
-        
+        // Don't skip by thread creation date — a thread created last month
+        // can still have posts this month. Let message-date filtering handle it.
         totalThreads++;
         console.log(`📖 Scanning thread: ${thread.name}`);
         const threadStats = await this.scanAllChannelMessages(thread, trackedRoles, sinceDate);
@@ -207,9 +227,10 @@ class AttachmentCounter {
     return userStats;
   }
 
-  // Scan channel (forum or regular)
+  // Scan channel (forum, media channel, or regular text)
   async scanChannel(channel, trackedRoles, sinceDate) {
-    if (channel.type === 15) {
+    if (channel.type === 15 || channel.type === 16) {
+      // type 15 = GuildForum, type 16 = GuildMedia — both use threads
       return await this.scanForumChannel(channel, trackedRoles, sinceDate);
     } else if (channel.isTextBased()) {
       return await this.scanAllChannelMessages(channel, trackedRoles, sinceDate);
@@ -308,8 +329,8 @@ class AttachmentCounter {
         }
       }
 
-      const channelName = channel ? 
-        (channel.type === 15 ? `🏛️ ${channel.name}` : `#${channel.name}`) : 
+      const channelName = channel ?
+        (channel.type === 15 || channel.type === 16 ? `🏛️ ${channel.name}` : `#${channel.name}`) :
         `Unknown Channel (${channelId})`;
 
       channelData.set(channelId, {
