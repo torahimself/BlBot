@@ -154,51 +154,94 @@ class AttachmentCounter {
     return userStats;
   }
 
-  // Scan forum channels
+  // Scan forum / media channels (type 15 or 16)
   async scanForumChannel(forumChannel, trackedRoles, sinceDate) {
     console.log(`🏛️  Scanning forum: ${forumChannel.name}`);
-    
+
     const userStats = new Map();
     let totalThreads = 0;
     let totalMedia = 0;
+    // Use a plain array + Set for dedup — avoids Collection iterator quirks
+    const seen = new Set();
+    const relevantThreads = [];
 
+    const addThread = (thread) => {
+      if (!seen.has(thread.id)) {
+        seen.add(thread.id);
+        relevantThreads.push(thread);
+      }
+    };
+
+    // ── 1. Active threads ─────────────────────────────────────────────────────
+    // All active threads can have this-month messages regardless of creation date
     try {
-      const activeThreads = await forumChannel.threads.fetchActive();
-      
-      const allThreads = new Collection();
-      activeThreads.threads.forEach(thread => allThreads.set(thread.id, thread));
+      const activeResult = await forumChannel.threads.fetchActive();
+      activeResult.threads.forEach(t => addThread(t));
+      console.log(`🟢 Active threads in ${forumChannel.name}: ${activeResult.threads.size}`);
+    } catch (err) {
+      console.error(`⚠️ fetchActive failed for ${forumChannel.name}:`, err.message);
+    }
 
-      // Paginate archived threads — keep fetching until we go past sinceDate
-      let before = undefined;
+    // ── 2. Recently archived threads ──────────────────────────────────────────
+    // Key insight: if a thread had a post in the current month it would have been
+    // re-opened (Discord auto-unarchives on new message) and would appear in
+    // fetchActive(). So only archived threads that were archived THIS month can
+    // possibly have this-month content.
+    try {
       let keepFetching = true;
+      let before = undefined;
+      let archivedAdded = 0;
+
       while (keepFetching) {
-        const archivedBatch = await forumChannel.threads.fetchArchived({ limit: 100, before });
-        if (archivedBatch.threads.size === 0) { keepFetching = false; break; }
+        const opts = { limit: 100 };
+        if (before) opts.before = before;
 
-        let oldestInBatch = null;
-        for (const [, thread] of archivedBatch.threads) {
-          allThreads.set(thread.id, thread);
-          if (!oldestInBatch || thread.createdAt < oldestInBatch.createdAt) {
-            oldestInBatch = thread;
+        const result = await forumChannel.threads.fetchArchived(opts);
+        if (!result || result.threads.size === 0) break;
+
+        let lastThread = null;
+        let allOlderThanMonth = true;
+
+        result.threads.forEach(thread => {
+          const archiveTs = thread.archiveTimestamp ? new Date(thread.archiveTimestamp) : null;
+          const createdAt  = thread.createdAt;
+
+          // Include if: created this month OR archived this month
+          if (createdAt >= sinceDate || (archiveTs && archiveTs >= sinceDate)) {
+            addThread(thread);
+            archivedAdded++;
+            allOlderThanMonth = false;
           }
-        }
 
-        // Stop paginating once oldest thread is older than our sinceDate
-        if (oldestInBatch && oldestInBatch.createdAt < sinceDate) keepFetching = false;
-        else before = oldestInBatch?.id;
+          lastThread = thread;
+        });
+
+        // Stop once we've gone far enough back that no thread could be relevant
+        if (allOlderThanMonth || !result.hasMore) {
+          keepFetching = false;
+        } else {
+          before = lastThread?.id;
+        }
 
         await new Promise(resolve => setTimeout(resolve, 500));
       }
 
-      console.log(`📂 Found ${allThreads.size} threads in forum ${forumChannel.name}`);
+      console.log(`📦 Archived (this month) in ${forumChannel.name}: ${archivedAdded}`);
+    } catch (err) {
+      console.error(`⚠️ fetchArchived failed for ${forumChannel.name}:`, err.message);
+    }
 
-      for (const [threadId, thread] of allThreads) {
-        // Don't skip by thread creation date — a thread created last month
-        // can still have posts this month. Let message-date filtering handle it.
-        totalThreads++;
-        console.log(`📖 Scanning thread: ${thread.name}`);
+    console.log(`📂 Total threads to scan in ${forumChannel.name}: ${relevantThreads.length}`);
+
+    // ── 3. Scan each thread (plain for loop over array, per-thread catch) ─────
+    for (let i = 0; i < relevantThreads.length; i++) {
+      const thread = relevantThreads[i];
+      totalThreads++;
+      console.log(`📖 [${i + 1}/${relevantThreads.length}] Scanning thread: ${thread.name}`);
+
+      try {
         const threadStats = await this.scanAllChannelMessages(thread, trackedRoles, sinceDate);
-        
+
         for (const [userId, userData] of threadStats) {
           if (!userStats.has(userId)) {
             userStats.set(userId, {
@@ -206,21 +249,23 @@ class AttachmentCounter {
               total: 0,
               channels: new Map(),
               roles: userData.roles,
-              userMention: `<@${userId}>`
+              userMention: `<@${userId}>`,
             });
           }
 
           const overallData = userStats.get(userId);
           overallData.total += userData.total;
           totalMedia += userData.total;
-          const forumThreadKey = `forum-${forumChannel.id}-${thread.id}`;
-          overallData.channels.set(forumThreadKey, userData.total);
-        }
 
-        await new Promise(resolve => setTimeout(resolve, 1000));
+          // Aggregate all threads of this forum under one key
+          const forumKey = `forum-${forumChannel.id}`;
+          overallData.channels.set(forumKey, (overallData.channels.get(forumKey) || 0) + userData.total);
+        }
+      } catch (err) {
+        console.error(`❌ Thread scan error [${thread.name}]:`, err.message);
       }
-    } catch (error) {
-      console.error(`❌ Error scanning forum ${forumChannel.name}:`, error.message);
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     console.log(`✅ Scanned ${totalThreads} threads in forum ${forumChannel.name}, found ${totalMedia} media items`);
@@ -323,7 +368,11 @@ class AttachmentCounter {
 
       for (const userData of userStats.values()) {
         for (const [channelKey, count] of userData.channels) {
-          if (channelKey === channelId || channelKey.startsWith(`forum-${channelId}-`)) {
+          if (
+            channelKey === channelId ||                          // regular channel
+            channelKey === `forum-${channelId}` ||              // new aggregated forum key
+            channelKey.startsWith(`forum-${channelId}-`)        // old per-thread forum key
+          ) {
             channelTotal += count;
           }
         }
