@@ -54,8 +54,8 @@ module.exports = {
     channels: [],
     // Categories to scan (all text + forum channels inside each will be scanned)
     categories: [
-      "1358456147191005336",  // original working category
-      // "REPLACE_WITH_NEW_CATEGORY_ID", // ← ADD THE NEW CATEGORY ID HERE
+      "1358456147191005336",  // Boosters category (working)
+      "1364189917412069457",  // Premium category (forums: ᴘ・ᴀʀᴀʙ, ᴍᴀɴɢᴀ, ʜᴇɴᴛᴀɪ, etc.)
     ],
     // Channels to exclude even if they're inside a scanned category
     excludedChannels: [
