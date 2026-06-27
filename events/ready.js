@@ -9,6 +9,7 @@ const StatpReportGenerator = require('../utils/statpReportGenerator');
 const Scheduler = require('../utils/scheduler');
 const { checkExpiredRoles } = require('../utils/economy/shopManager.js');
 const { seedVoiceUsers } = require('../utils/economy/voiceTracker.js');
+const { startTracker } = require('../utils/twitterTracker.js');
 
 module.exports = {
   name: 'ready',
@@ -79,6 +80,13 @@ module.exports = {
       console.log('🎤 Voice tracker activated');
     } catch (error) {
       console.error('❌ Error starting voice tracker:', error);
+    }
+
+    // Twitter / X post tracker — @Emmaoinkk → channel 1437107048348123136
+    try {
+      startTracker(client);
+    } catch (error) {
+      console.error('❌ Error starting Twitter tracker:', error);
     }
 
     console.log('🤖 Bot is fully operational!');
