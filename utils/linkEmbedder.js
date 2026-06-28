@@ -1,96 +1,109 @@
 'use strict';
 
-// Role required to trigger link embedding (testing role)
+const https = require('https');
+
 const EMBED_ROLE_ID = '1502603423923699833';
 
-// ── Proxy services ────────────────────────────────────────────────────────────
-// Twitter/X    → fxtwitter.com  /  fixupx.com  (reliable, maintained)
-// TikTok       → tnktok.com                    (replaced unreliable vxtiktok)
-// Instagram    → instagramez.com               (replaced unreliable ddinstagram)
-// ─────────────────────────────────────────────────────────────────────────────
-// To swap a proxy later, just change the string below — nothing else needs editing.
-const PROXY = {
-  tiktok:    'tnktok.com',
-  instagram: 'instagramez.com',
+// ── Fallback proxies (used when embedez API is unavailable) ───────────────────
+const FALLBACK = {
+  twitter:   (url) => /\/\/(?:www\.)?x\.com\//i.test(url)
+                        ? url.replace(/(?:www\.)?x\.com/, 'fixupx.com')
+                        : url.replace(/(?:www\.)?twitter\.com/, 'fxtwitter.com'),
+  tiktok:    (url) => url.replace(/tiktok\.com/, 'tnktok.com'),
+  instagram: (url) => url.replace(/(?:www\.)?instagram\.com/, 'zzinstagram.com'),
 };
 
-// ── Three focused regexes (one per platform, easy to read/debug) ──────────────
-
-// Matches twitter.com and x.com URLs
-const TWITTER_RE = /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[^\s<>"')]+/gi;
-
-// Matches all TikTok URL formats: www, vm (short link), vt (another short variant)
-const TIKTOK_RE  = /https?:\/\/(?:(?:vm|vt|www)\.)?tiktok\.com\/[^\s<>"')]+/gi;
-
-// Matches Instagram posts, reels, reels (plural), TV, stories
-const INSTA_RE   = /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv|stories)\/[^\s<>"')]+/gi;
-
-// ── Transform helpers ─────────────────────────────────────────────────────────
-
-function transformTwitter(url) {
-  // x.com → fixupx.com, twitter.com → fxtwitter.com
-  if (/\/\/(?:www\.)?x\.com\//i.test(url)) {
-    return url.replace(/(?:www\.)?x\.com/, 'fixupx.com');
-  }
-  return url.replace(/(?:www\.)?twitter\.com/, 'fxtwitter.com');
-}
-
-function transformTikTok(url) {
-  // Preserves any subdomain (vm., vt., www.) — just swaps the domain name
-  return url.replace(/tiktok\.com/, PROXY.tiktok);
-}
-
-function transformInstagram(url) {
-  return url.replace(/(?:www\.)?instagram\.com/, PROXY.instagram);
-}
-
-// ── Main rewrite function ─────────────────────────────────────────────────────
-
-function rewriteLinks(content) {
-  let result  = content;
-  let found   = false;
-
-  // Reset all regex lastIndex (they're global)
-  const reset = () => {
-    TWITTER_RE.lastIndex = 0;
-    TIKTOK_RE.lastIndex  = 0;
-    INSTA_RE.lastIndex   = 0;
-  };
-
-  reset();
-
-  if (TWITTER_RE.test(result)) {
-    TWITTER_RE.lastIndex = 0;
-    result = result.replace(TWITTER_RE, url => {
-      found = true;
-      return transformTwitter(url.replace(/[.,;!?)>\]]+$/, ''));
+// ── EmbedEZ API ───────────────────────────────────────────────────────────────
+// Docs: https://embedez.com/blog/embedez-api-documentation
+// Returns the clean proxy URL that hides the raw social media link.
+function fetchEmbedEzKey(originalUrl) {
+  return new Promise((resolve, reject) => {
+    const apiUrl = `https://embedez.com/api/v1/providers/search?url=${encodeURIComponent(originalUrl)}`;
+    const req = https.get(apiUrl, {
+      timeout: 8000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; DiscordBot/1.0)',
+        'Accept': 'application/json',
+      },
+    }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          resolve(json.key || null);   // e.g. "search_6a409cfa23ae94e90c4c020c"
+        } catch {
+          resolve(null);
+        }
+      });
     });
-  }
-  TWITTER_RE.lastIndex = 0;
-
-  if (TIKTOK_RE.test(result)) {
-    TIKTOK_RE.lastIndex = 0;
-    result = result.replace(TIKTOK_RE, url => {
-      found = true;
-      return transformTikTok(url.replace(/[.,;!?)>\]]+$/, ''));
-    });
-  }
-  TIKTOK_RE.lastIndex = 0;
-
-  if (INSTA_RE.test(result)) {
-    INSTA_RE.lastIndex = 0;
-    result = result.replace(INSTA_RE, url => {
-      found = true;
-      return transformInstagram(url.replace(/[.,;!?)>\]]+$/, ''));
-    });
-  }
-  INSTA_RE.lastIndex = 0;
-
-  return found ? result : null;
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('embedez timeout')); });
+  });
 }
 
-// ── Discord message handler ───────────────────────────────────────────────────
+async function getEmbedEzProxyUrl(originalUrl, platform) {
+  const key = await fetchEmbedEzKey(originalUrl);
+  if (!key) return null;
 
+  // Matches the format from proxy.embedez.com
+  const innerUrl = encodeURIComponent(`https://embedez.com/api/v1/redirect/${key}?site=${platform}`);
+  const referUrl = `https://embedez.com/embed/${key}`;
+  return `https://proxy.embedez.com/embed?url=${innerUrl}&refer=${referUrl}`;
+}
+
+// ── URL detection ─────────────────────────────────────────────────────────────
+const PATTERNS = [
+  {
+    re: /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[^\s<>"')]+/gi,
+    platform: 'twitter',
+  },
+  {
+    re: /https?:\/\/(?:(?:vm|vt|www)\.)?tiktok\.com\/[^\s<>"')]+/gi,
+    platform: 'tiktok',
+  },
+  {
+    re: /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels|tv|stories)\/[^\s<>"')]+/gi,
+    platform: 'instagram',
+  },
+];
+
+function detectUrls(content) {
+  const found = [];
+  for (const { re, platform } of PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(content)) !== null) {
+      found.push({
+        url:      m[0].replace(/[.,;!?)>\]]+$/, ''), // trim trailing punctuation
+        platform,
+        start:    m.index,
+        end:      m.index + m[0].length,
+      });
+    }
+    re.lastIndex = 0;
+  }
+  return found.sort((a, b) => a.start - b.start);
+}
+
+// ── Resolve one URL to its clean proxy form ───────────────────────────────────
+async function resolveUrl(url, platform) {
+  // Twitter is already perfect with fxtwitter — no API call needed
+  if (platform === 'twitter') return FALLBACK.twitter(url);
+
+  // TikTok / Instagram: try embedez for the clean URL, fall back to domain swap
+  try {
+    const ezUrl = await getEmbedEzProxyUrl(url, platform);
+    if (ezUrl) return ezUrl;
+  } catch (err) {
+    console.warn(`[LinkEmbed] embedez API failed (${platform}), using fallback: ${err.message}`);
+  }
+
+  return FALLBACK[platform](url);
+}
+
+// ── Main handler (called from messageCreate) ──────────────────────────────────
 async function handleLinkEmbed(message) {
   if (!message.guild || !message.channel?.isTextBased()) return false;
   if (message.author.bot) return false;
@@ -98,30 +111,38 @@ async function handleLinkEmbed(message) {
   const member = message.member;
   if (!member?.roles?.cache?.has(EMBED_ROLE_ID)) return false;
 
-  const rewritten = rewriteLinks(message.content);
-  if (!rewritten) return false;
+  const detections = detectUrls(message.content);
+  if (!detections.length) return false;
 
-  const displayName = member.displayName || message.author.username;
-  const repost = `📎 **${displayName}:**\n${rewritten}`;
+  // Resolve each URL → substitute from end to start so indices stay valid
+  let result = message.content;
+  for (const det of [...detections].reverse()) {
+    const proxyUrl = await resolveUrl(det.url, det.platform);
+    result = result.slice(0, det.start) + proxyUrl + result.slice(det.end);
+  }
 
-  // Delete original first — if we lack permission, abort cleanly
+  // Mention the sender so they get a ping
+  const repost = `📎 <@${message.author.id}>:\n${result}`;
+
+  // Delete original first
   try {
     await message.delete();
   } catch (err) {
     if (err.code === 50013) {
-      console.warn(`⚠️ [LinkEmbed] Missing MANAGE_MESSAGES in #${message.channel.name}`);
+      console.warn(`[LinkEmbed] Missing MANAGE_MESSAGES in #${message.channel.name}`);
     } else {
-      console.error(`❌ [LinkEmbed] Delete failed:`, err.message);
+      console.error(`[LinkEmbed] Delete failed:`, err.message);
     }
     return false;
   }
 
+  // Repost with proxy URL
   try {
     await message.channel.send(repost);
-    console.log(`🔗 [LinkEmbed] Reposted ${displayName}'s link in #${message.channel.name}`);
+    console.log(`[LinkEmbed] Reposted ${message.author.username}'s ${detections.map(d => d.platform).join('+')} link`);
     return true;
   } catch (err) {
-    console.error(`❌ [LinkEmbed] Send failed:`, err.message);
+    console.error(`[LinkEmbed] Send failed:`, err.message);
     return false;
   }
 }
