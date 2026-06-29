@@ -1,16 +1,14 @@
 'use strict';
 
+const https    = require('https');
+const http     = require('http');
 const fs       = require('fs');
 const path     = require('path');
 const os       = require('os');
-let ytDlp;
-try { ytDlp = require('yt-dlp-exec'); } catch { ytDlp = null; }
 const { AttachmentBuilder } = require('discord.js');
 
-const EMBED_ROLE_ID = '1502603423923699833';
-
-// Discord's free-tier file size limit (25 MB)
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const EMBED_ROLE_ID  = '1502603423923699833';
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB Discord free limit
 
 // ── URL detection ─────────────────────────────────────────────────────────────
 const PATTERNS = [
@@ -32,37 +30,114 @@ function detectUrls(content) {
   return found.sort((a, b) => a.start - b.start);
 }
 
-// ── Twitter → fixupx plain URL (Discord renders inline video natively) ────────
-function buildTwitterPost(url, authorId) {
-  const fixUrl = url
-    .replace(/(?:www\.)?x\.com/, 'fixupx.com')
-    .replace(/(?:www\.)?twitter\.com/, 'fixupx.com');
-
-  return { content: `<@${authorId}>\n${fixUrl}` };
+// ── HTTP GET → JSON (follows redirects) ───────────────────────────────────────
+function fetchJson(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, */*',
+        ...headers,
+      },
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchJson(res.headers.location, headers).then(resolve).catch(reject);
+      }
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', c => (data += c));
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
 }
 
-// ── Download video via yt-dlp-exec and upload to Discord ─────────────────────
+// ── Download binary file to disk (follows redirects) ─────────────────────────
+function downloadFile(url, destPath, referer = 'https://www.tiktok.com/') {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https') ? https : http;
+    const file = fs.createWriteStream(destPath);
+    const req = lib.get(url, {
+      timeout: 60000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': referer,
+      },
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        file.close(() => {
+          try { fs.unlinkSync(destPath); } catch {}
+          downloadFile(res.headers.location, destPath, referer).then(resolve).catch(reject);
+        });
+        return;
+      }
+      if (res.statusCode !== 200) {
+        file.close();
+        return reject(new Error(`HTTP ${res.statusCode} downloading video`));
+      }
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+      file.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('download timeout')); });
+  });
+}
+
+// ── TikTok: tikwm.com public API ─────────────────────────────────────────────
+async function getTikTokVideoUrl(url) {
+  const data = await fetchJson(
+    `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`
+  );
+  if (data?.code === 0 && data?.data?.play) {
+    return data.data.play;
+  }
+  throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
+}
+
+// ── Instagram: ssig.app public API ───────────────────────────────────────────
+async function getInstagramVideoUrl(url) {
+  // ssig.app is a reliable no-key Instagram downloader API
+  const data = await fetchJson(
+    `https://ssig.app/api/instagram?url=${encodeURIComponent(url)}`
+  );
+  // Try common response shapes
+  const videoUrl = data?.url || data?.video_url || data?.data?.url || data?.data?.video_url
+                || (Array.isArray(data?.data) ? data.data.find(i => i.type === 'video')?.url : null)
+                || (Array.isArray(data?.media) ? data.media.find(i => i.type?.includes('video'))?.url : null);
+  if (videoUrl) return videoUrl;
+  throw new Error(`ssig: no video URL in response`);
+}
+
+// ── Download video and return Discord payload ─────────────────────────────────
 async function buildVideoPost(url, authorId, platform) {
-  if (!ytDlp) throw new Error('yt-dlp-exec not found — install it via Pebble Node.js Packages');
+  let videoUrl;
+
+  if (platform === 'tiktok') {
+    videoUrl = await getTikTokVideoUrl(url);
+  } else if (platform === 'instagram') {
+    videoUrl = await getInstagramVideoUrl(url);
+  }
+
+  if (!videoUrl) throw new Error('no video URL resolved');
 
   const tmpFile = path.join(os.tmpdir(), `blbot_${Date.now()}.mp4`);
 
   try {
-    await ytDlp(url, {
-      output: tmpFile,
-      noPlaylist: true,
-      format: 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      mergeOutputFormat: 'mp4',
-      maxFilesize: '24M',
-      quiet: true,
-      noWarnings: true,
-    });
+    await downloadFile(videoUrl, tmpFile);
 
     const stat = fs.statSync(tmpFile);
     if (stat.size > MAX_FILE_BYTES) {
       fs.unlinkSync(tmpFile);
-      console.warn(`[LinkEmbed] ${platform} video too large (${(stat.size / 1024 / 1024).toFixed(1)} MB), skipping`);
+      console.warn(`[LinkEmbed] ${platform} too large (${(stat.size / 1024 / 1024).toFixed(1)} MB), skipping`);
       return null;
+    }
+    if (stat.size === 0) {
+      fs.unlinkSync(tmpFile);
+      throw new Error('downloaded file is empty');
     }
 
     const attachment = new AttachmentBuilder(tmpFile, { name: 'video.mp4' });
@@ -75,6 +150,14 @@ async function buildVideoPost(url, authorId, platform) {
     try { fs.unlinkSync(tmpFile); } catch {}
     throw err;
   }
+}
+
+// ── Twitter → fixupx plain URL ────────────────────────────────────────────────
+function buildTwitterPost(url, authorId) {
+  const fixUrl = url
+    .replace(/(?:www\.)?x\.com/, 'fixupx.com')
+    .replace(/(?:www\.)?twitter\.com/, 'fixupx.com');
+  return { content: `<@${authorId}>\n${fixUrl}` };
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -102,13 +185,11 @@ async function handleLinkEmbed(message) {
   for (const det of detections) {
     try {
       let payload;
-
       if (det.platform === 'twitter') {
         payload = buildTwitterPost(det.url, message.author.id);
       } else {
         payload = await buildVideoPost(det.url, message.author.id, det.platform);
       }
-
       if (payload) {
         const { _cleanup, ...sendPayload } = payload;
         await message.channel.send(sendPayload);
