@@ -98,78 +98,20 @@ async function getTikTokVideoUrl(url) {
   throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
 }
 
-// ── Cobalt API instances (v10) — tried in order until one works ───────────────
-// These are community-run public instances that support Instagram
-const COBALT_INSTANCES = [
-  'https://cobalt.api.movw.dev',
-  'https://api.cobalt.tools',
-  'https://cobalt.drgns.space',
-  'https://cobalt.ayo.tf',
-  'https://cobalt.duti.tech',
-];
-
-function postJson(url, body, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify(body);
-    const parsed  = new URL(url);
-    const options = {
-      hostname: parsed.hostname,
-      path:     parsed.pathname,
-      method:   'POST',
-      timeout:  timeoutMs,
-      headers: {
-        'Content-Type':  'application/json',
-        'Accept':        'application/json',
-        'User-Agent':    'BlBot/1.0 (+discord)',
-        'Content-Length': Buffer.byteLength(payload),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', c => (data += c));
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch { resolve({ status: res.statusCode, body: null }); }
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    req.write(payload);
-    req.end();
-  });
-}
-
-// ── Instagram: try Cobalt instances one by one ────────────────────────────────
+// ── Instagram: tikwm.com (same reliable API used for TikTok) ─────────────────
 async function getInstagramVideoUrl(url) {
   const cleanUrl = url.split('?')[0].replace(/\/?$/, '/');
-  const errors = [];
 
-  for (const instance of COBALT_INSTANCES) {
-    try {
-      const res = await postJson(`${instance}/`, { url: cleanUrl, videoQuality: '720', downloadMode: 'auto' });
+  const data = await fetchJson(
+    `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}`
+  );
 
-      if (res.body?.status === 'tunnel' || res.body?.status === 'redirect') {
-        if (res.body.url) {
-          console.log(`[LinkEmbed] Instagram resolved via ${instance}`);
-          return res.body.url;
-        }
-      }
-      // picker = multiple media items, grab first video
-      if (res.body?.status === 'picker' && Array.isArray(res.body.picker)) {
-        const video = res.body.picker.find(i => i.type === 'video') || res.body.picker[0];
-        if (video?.url) {
-          console.log(`[LinkEmbed] Instagram picker resolved via ${instance}`);
-          return video.url;
-        }
-      }
-      errors.push(`${instance}: status=${res.body?.status} error=${res.body?.error?.code || '?'}`);
-    } catch (e) {
-      errors.push(`${instance}: ${e.message}`);
-    }
+  if (data?.code === 0 && data?.data) {
+    const play = data.data.play || data.data.video || data.data.wmplay;
+    if (play) return play;
   }
 
-  throw new Error(`All Cobalt instances failed:\n${errors.join('\n')}`);
+  throw new Error(`tikwm returned: code=${data?.code} msg=${data?.msg || '?'}`);
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
