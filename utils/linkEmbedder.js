@@ -3,7 +3,8 @@
 const fs       = require('fs');
 const path     = require('path');
 const os       = require('os');
-const ytDlp    = require('yt-dlp-exec');
+let ytDlp;
+try { ytDlp = require('yt-dlp-exec'); } catch { ytDlp = null; }
 const { AttachmentBuilder } = require('discord.js');
 
 const EMBED_ROLE_ID = '1502603423923699833';
@@ -42,6 +43,8 @@ function buildTwitterPost(url, authorId) {
 
 // ── Download video via yt-dlp-exec and upload to Discord ─────────────────────
 async function buildVideoPost(url, authorId, platform) {
+  if (!ytDlp) throw new Error('yt-dlp-exec not found — install it via Pebble Node.js Packages');
+
   const tmpFile = path.join(os.tmpdir(), `blbot_${Date.now()}.mp4`);
 
   try {
