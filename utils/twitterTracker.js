@@ -10,7 +10,7 @@ const USERNAME     = 'Michael8uo2';
 const DISPLAY_NAME = 'Mori';
 const CHANNEL_ID   = '1437107048348123136';
 const AVATAR_URL   = `https://unavatar.io/x/${USERNAME}`;
-const POLL_MS      = 15 * 60 * 1000;
+const POLL_MS      = 30 * 60 * 1000;
 const MAX_NEW_PER_POLL = 5;
 
 const STATE_FILE = path.join(__dirname, '../data/twitter_tracker.json');
@@ -195,9 +195,16 @@ let _started = false;
 function startTracker(client) {
   if (_started) return;
   _started = true;
-  console.log(`🐦 [TwitterTracker] Tracking @${USERNAME} via X syndication API → #${CHANNEL_ID} (every ${POLL_MS / 60000} min)`);
-  setTimeout(() => poll(client), 20_000);
-  setInterval(() => poll(client), POLL_MS);
+  console.log(`🐦 [TwitterTracker] Tracking @${USERNAME} via X syndication API → #${CHANNEL_ID} (every ~${POLL_MS / 60000} min)`);
+  // Initial poll after 30s
+  setTimeout(() => poll(client), 30_000);
+
+  // Subsequent polls at 30 min ± up to 5 min jitter to avoid hitting rate limits
+  const scheduleNext = () => {
+    const jitter = Math.floor(Math.random() * 5 * 60 * 1000);
+    setTimeout(() => { poll(client); scheduleNext(); }, POLL_MS + jitter);
+  };
+  setTimeout(scheduleNext, POLL_MS);
 }
 
 module.exports = { startTracker };
