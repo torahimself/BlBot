@@ -98,20 +98,90 @@ async function getTikTokVideoUrl(url) {
   throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
 }
 
-// ── Instagram: tikwm.com (same reliable API used for TikTok) ─────────────────
+// ── HTTP POST → JSON helper ───────────────────────────────────────────────────
+function postRequest(hostname, path, body, headers = {}, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    const payload = typeof body === 'string' ? body : JSON.stringify(body);
+    const isJson  = typeof body !== 'string';
+    const req = https.request({
+      hostname, path, method: 'POST', timeout: timeoutMs,
+      headers: {
+        'Content-Type': isJson ? 'application/json' : 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',
+        'Accept': 'application/json, text/html, */*',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Length': Buffer.byteLength(payload),
+        ...headers,
+      },
+    }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', c => (data += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+// ── Instagram: multi-service fallback ────────────────────────────────────────
 async function getInstagramVideoUrl(url) {
   const cleanUrl = url.split('?')[0].replace(/\/?$/, '/');
+  const enc = encodeURIComponent(cleanUrl);
 
-  const data = await fetchJson(
-    `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}`
-  );
+  // ── 1. sssinstagram.com ───────────────────────────────────────────────────
+  try {
+    const res = await postRequest(
+      'sssinstagram.com', '/process',
+      `url=${enc}`,
+      { 'Origin': 'https://sssinstagram.com', 'Referer': 'https://sssinstagram.com/' }
+    );
+    const data = JSON.parse(res.body);
+    const link = data?.links?.[0]?.url || data?.url || data?.video_url;
+    if (link) return link;
+    // parse HTML response if JSON doesn't have it
+    const mp4 = res.body.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
+    if (mp4) return mp4[0];
+  } catch (e) { console.warn(`[LinkEmbed] Instagram sssinstagram failed: ${e.message}`); }
 
-  if (data?.code === 0 && data?.data) {
-    const play = data.data.play || data.data.video || data.data.wmplay;
-    if (play) return play;
-  }
+  // ── 2. indown.io ──────────────────────────────────────────────────────────
+  try {
+    const res = await postRequest(
+      'indown.io', '/download',
+      `link=${enc}&locale=en`,
+      { 'Origin': 'https://indown.io', 'Referer': 'https://indown.io/' }
+    );
+    const mp4 = res.body.match(/https?:\/\/[^"'\s]+\.mp4[^"'\s]*/);
+    if (mp4) return mp4[0];
+    const data = JSON.parse(res.body);
+    const link = data?.url || data?.video_url || data?.download_url;
+    if (link) return link;
+  } catch (e) { console.warn(`[LinkEmbed] Instagram indown.io failed: ${e.message}`); }
 
-  throw new Error(`tikwm returned: code=${data?.code} msg=${data?.msg || '?'}`);
+  // ── 3. fastdl.app ─────────────────────────────────────────────────────────
+  try {
+    const res = await postRequest(
+      'fastdl.app', '/api/convert',
+      JSON.stringify({ url: cleanUrl }),
+      { 'Origin': 'https://fastdl.app', 'Referer': 'https://fastdl.app/', 'Content-Type': 'application/json' }
+    );
+    const data = JSON.parse(res.body);
+    const link = data?.url || data?.video_url
+      || (Array.isArray(data?.links) ? data.links.find(l => l.quality === 'HD' || l.ext === 'mp4')?.url : null);
+    if (link) return link;
+  } catch (e) { console.warn(`[LinkEmbed] Instagram fastdl.app failed: ${e.message}`); }
+
+  // ── 4. rdownloader.com ───────────────────────────────────────────────────
+  try {
+    const res = await fetchJson(`https://rdownloader.com/api/download?url=${enc}`);
+    const link = res?.url || res?.video_url
+      || (Array.isArray(res?.media) ? res.media.find(m => m.type === 'video')?.url : null);
+    if (link) return link;
+  } catch (e) { console.warn(`[LinkEmbed] Instagram rdownloader.com failed: ${e.message}`); }
+
+  throw new Error('All Instagram download attempts failed — Instagram requires cookies on server IPs');
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
