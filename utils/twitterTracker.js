@@ -1,31 +1,17 @@
 'use strict';
 
 const https   = require('https');
-const http    = require('http');
 const fs      = require('fs');
 const path    = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const USERNAME     = 'Michael8uo2';
-const DISPLAY_NAME = 'Michael';
+const DISPLAY_NAME = 'Mori';
 const CHANNEL_ID   = '1437107048348123136';
 const AVATAR_URL   = `https://unavatar.io/x/${USERNAME}`;
-const POLL_MS      = 5 * 60 * 1000;   // every 5 minutes
-const MAX_NEW_PER_POLL = 5;            // safety cap: don't flood on catch-up
-
-// Feed sources tried in order — first success wins.
-// Nitter instances are unreliable but we cast a wide net so at least one works.
-// bird.makeup needs the account to be indexed first (may 404 on new accounts).
-const RSS_SOURCES = [
-  `https://nitter.poast.org/${USERNAME}/rss`,
-  `https://nitter.kavin.rocks/${USERNAME}/rss`,
-  `https://nttr.stream/${USERNAME}/rss`,
-  `https://nitter.moomoo.me/${USERNAME}/rss`,
-  `https://nitter.privacydev.net/${USERNAME}/rss`,
-  `https://bird.makeup/users/${USERNAME}/feed.atom`,
-  `https://twitrss.me/twitter_user_to_rss/?user=${USERNAME}`,
-];
+const POLL_MS      = 5 * 60 * 1000;
+const MAX_NEW_PER_POLL = 5;
 
 const STATE_FILE = path.join(__dirname, '../data/twitter_tracker.json');
 
@@ -41,137 +27,86 @@ function loadLastId() {
 
 function saveLastId(id) {
   try {
+    const dir = path.dirname(STATE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(STATE_FILE, JSON.stringify({ lastTweetId: id }, null, 2));
   } catch (e) {
     console.error('[TwitterTracker] State save error:', e.message);
   }
 }
 
-// ── HTTP fetch (follows redirects, timeout) ───────────────────────────────────
-function fetchUrl(url, ttl = 12_000) {
+// ── HTTP GET → text (follows redirects) ──────────────────────────────────────
+function fetchHtml(url, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
-    const lib = url.startsWith('https') ? https : http;
-    const req = lib.get(url, {
-      timeout: ttl,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DiscordBot/1.0)' },
+    const req = https.get(url, {
+      timeout: timeoutMs,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+      },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchUrl(res.headers.location, ttl).then(resolve).catch(reject);
+        return fetchHtml(res.headers.location, timeoutMs).then(resolve).catch(reject);
       }
-      if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
       let data = '';
       res.setEncoding('utf8');
       res.on('data', c => (data += c));
       res.on('end', () => resolve(data));
     });
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
   });
 }
 
-// ── RSS parsing ───────────────────────────────────────────────────────────────
-function tagContent(xml, tag) {
-  // Try CDATA first, then plain
-  const cdataRe = new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`, 'i');
-  const plainRe = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
-  const m = xml.match(cdataRe) || xml.match(plainRe);
-  return m ? m[1].trim() : '';
-}
+// ── Fetch timeline from Twitter's own syndication API ─────────────────────────
+// This is the same endpoint used by embedded Twitter widgets on websites.
+// It returns HTML containing a __NEXT_DATA__ JSON blob with tweet data.
+// No auth, no scraping third parties — this is Twitter's own public endpoint.
+async function fetchTimeline() {
+  const url = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${USERNAME}`;
+  const html = await fetchHtml(url);
 
-function stripHtml(html) {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+  // Extract the __NEXT_DATA__ JSON blob embedded in the page
+  const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]*)<\/script>/);
+  if (!match?.[1]) throw new Error('Could not find __NEXT_DATA__ in syndication response');
 
-function extractImages(html) {
-  const out = [];
-  const re = /<img[^>]+src="([^"]+)"/gi;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    let url = m[1];
-    // Skip emoji / tiny images
-    if (/emoji|_normal\.|_mini\.|profile_image/i.test(url)) continue;
-    // Convert nitter /pic/media proxy → pbs.twimg.com
-    const mediaMatch = url.match(/\/pic\/media[%2F/]+(.+)/i);
-    if (mediaMatch) {
-      url = `https://pbs.twimg.com/media/${decodeURIComponent(mediaMatch[1])}`;
+  const data = JSON.parse(match[1]);
+  const entries = data?.props?.pageProps?.timeline?.entries;
+  if (!Array.isArray(entries)) throw new Error('No timeline entries found in response');
+
+  const tweets = [];
+  for (const entry of entries) {
+    const t = entry?.content?.tweet;
+    if (!t) continue;
+
+    const tweetId  = t.id_str || String(t.id);
+    if (!tweetId) continue;
+
+    // Skip retweets and replies
+    if (t.retweeted_status) continue;
+    if (t.in_reply_to_status_id_str) continue;
+    if ((t.full_text || t.text || '').startsWith('RT @')) continue;
+
+    const text     = (t.full_text || t.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
+    const tweetUrl = `https://x.com/${USERNAME}/status/${tweetId}`;
+    const pubDate  = t.created_at;
+
+    // Extract images from media entities
+    const images = [];
+    const media = t.entities?.media || t.extended_entities?.media || [];
+    for (const m of media) {
+      if (m.media_url_https) images.push(m.media_url_https);
     }
-    // Skip remaining relative URLs
-    if (!url.startsWith('http')) continue;
-    out.push(url);
-  }
-  return out;
-}
 
-function parseTweetId(url) {
-  const m = (url || '').match(/\/status\/(\d+)/);
-  return m ? m[1] : null;
-}
-
-function parseFeed(xml) {
-  const items = [];
-  const isAtom = xml.includes('<feed') && xml.includes('<entry>');
-
-  if (isAtom) {
-    // ── Atom format (bird.makeup) ─────────────────────────────────────────
-    const re = /<entry>([\s\S]*?)<\/entry>/g;
-    let m;
-    while ((m = re.exec(xml)) !== null) {
-      const raw = m[1];
-
-      // Atom uses <id> for the URL and <updated> for date
-      const id      = tagContent(raw, 'id');
-      const updated = tagContent(raw, 'updated');
-      const title   = tagContent(raw, 'title');
-      const content = tagContent(raw, 'content') || tagContent(raw, 'summary');
-
-      const tweetId = parseTweetId(id);
-      if (!tweetId) continue;
-
-      const titleText = stripHtml(title).replace(/^[^:]+:\s*/, '').trim();
-      const bodyText  = stripHtml(content);
-      const text      = bodyText.length > titleText.length ? bodyText : titleText;
-
-      if (/^RT @/i.test(text) || text.startsWith('@')) continue;
-
-      const tweetUrl = `https://x.com/${USERNAME}/status/${tweetId}`;
-      const images   = extractImages(content);
-
-      items.push({ tweetId, tweetUrl, text, images, pubDate: updated });
-    }
-  } else {
-    // ── RSS format (twitrss.me and others) ───────────────────────────────
-    const re = /<item>([\s\S]*?)<\/item>/g;
-    let m;
-    while ((m = re.exec(xml)) !== null) {
-      const raw = m[1];
-      const rawTitle = tagContent(raw, 'title');
-      const desc     = tagContent(raw, 'description');
-      const link     = tagContent(raw, 'link');
-      const pubDate  = tagContent(raw, 'pubDate');
-      const tweetId  = parseTweetId(link) || parseTweetId(tagContent(raw, 'guid'));
-      if (!tweetId) continue;
-
-      const titleText = rawTitle.replace(/^[^:]+:\s*/, '').trim();
-      const descText  = stripHtml(desc);
-      const text      = descText.length > titleText.length ? descText : titleText;
-
-      if (/^RT @/i.test(text) || text.startsWith('@')) continue;
-
-      const tweetUrl = `https://x.com/${USERNAME}/status/${tweetId}`;
-      const images   = extractImages(desc);
-
-      items.push({ tweetId, tweetUrl, text, images, pubDate });
-    }
+    tweets.push({ tweetId, tweetUrl, text, images, pubDate });
   }
 
-  return items;
+  return tweets;
 }
 
 // ── Discord embed ─────────────────────────────────────────────────────────────
@@ -186,12 +121,8 @@ function buildEmbed(tweet) {
     .setTimestamp(tweet.pubDate ? new Date(tweet.pubDate) : new Date())
     .setFooter({ text: `@${USERNAME}  •  X (Twitter)` });
 
-  if (tweet.text) {
-    embed.setDescription(tweet.text.slice(0, 4096));
-  }
-  if (tweet.images.length > 0) {
-    embed.setImage(tweet.images[0]);
-  }
+  if (tweet.text) embed.setDescription(tweet.text.slice(0, 4096));
+  if (tweet.images.length > 0) embed.setImage(tweet.images[0]);
 
   return embed;
 }
@@ -213,42 +144,22 @@ function buildRow(tweet) {
 }
 
 // ── Polling ───────────────────────────────────────────────────────────────────
-async function fetchTweets() {
-  let lastErr;
-  for (const src of RSS_SOURCES) {
-    try {
-      const xml = await fetchUrl(src);
-      if (xml && (xml.includes('<item>') || xml.includes('<entry>'))) {
-        const items = parseFeed(xml);
-        if (items.length > 0) return items;
-        console.warn(`[TwitterTracker] Source returned feed but 0 usable tweets (${src})`);
-      }
-    } catch (err) {
-      lastErr = err;
-      console.warn(`[TwitterTracker] Source failed (${src}): ${err.message}`);
-    }
-  }
-  throw lastErr || new Error('All feed sources failed');
-}
-
 async function poll(client) {
   try {
     const channel = client.channels.cache.get(CHANNEL_ID);
-    if (!channel) return; // not cached yet — will succeed next poll
+    if (!channel) return;
 
-    const items = await fetchTweets();
+    const items = await fetchTimeline();
     if (!items.length) return;
 
     const lastId = loadLastId();
 
-    // First ever run — just bookmark latest, don't post old tweets
     if (!lastId) {
       saveLastId(items[0].tweetId);
       console.log(`[TwitterTracker] First run — bookmarked @${USERNAME} tweet ${items[0].tweetId}`);
       return;
     }
 
-    // Collect tweets newer than the last seen one
     const newTweets = [];
     for (const item of items) {
       if (item.tweetId === lastId) break;
@@ -257,18 +168,13 @@ async function poll(client) {
 
     if (!newTweets.length) return;
 
-    // Update bookmark
     saveLastId(items[0].tweetId);
 
-    // Post oldest-first, with safety cap
     const toPost = newTweets.reverse().slice(-MAX_NEW_PER_POLL);
     for (const tweet of toPost) {
       try {
-        await channel.send({
-          embeds:     [buildEmbed(tweet)],
-          components: [buildRow(tweet)],
-        });
-        console.log(`[TwitterTracker] Posted @${USERNAME} tweet ${tweet.tweetId}`);
+        await channel.send({ embeds: [buildEmbed(tweet)], components: [buildRow(tweet)] });
+        console.log(`[TwitterTracker] ✅ Posted @${USERNAME} tweet ${tweet.tweetId}`);
         await new Promise(r => setTimeout(r, 1200));
       } catch (err) {
         console.error(`[TwitterTracker] Send error (${tweet.tweetId}):`, err.message);
@@ -285,10 +191,7 @@ let _started = false;
 function startTracker(client) {
   if (_started) return;
   _started = true;
-
-  console.log(`🐦 [TwitterTracker] Tracking @${USERNAME} → #${CHANNEL_ID} (every ${POLL_MS / 60000} min)`);
-
-  // First poll after 20 s (let channel cache settle)
+  console.log(`🐦 [TwitterTracker] Tracking @${USERNAME} via X syndication API → #${CHANNEL_ID} (every ${POLL_MS / 60000} min)`);
   setTimeout(() => poll(client), 20_000);
   setInterval(() => poll(client), POLL_MS);
 }
