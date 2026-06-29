@@ -98,74 +98,78 @@ async function getTikTokVideoUrl(url) {
   throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
 }
 
-// ── Instagram: multi-fallback video URL resolver ──────────────────────────────
+// ── Cobalt API instances (v10) — tried in order until one works ───────────────
+// These are community-run public instances that support Instagram
+const COBALT_INSTANCES = [
+  'https://cobalt.api.movw.dev',
+  'https://api.cobalt.tools',
+  'https://cobalt.drgns.space',
+  'https://cobalt.ayo.tf',
+  'https://cobalt.duti.tech',
+];
+
+function postJson(url, body, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const parsed  = new URL(url);
+    const options = {
+      hostname: parsed.hostname,
+      path:     parsed.pathname,
+      method:   'POST',
+      timeout:  timeoutMs,
+      headers: {
+        'Content-Type':  'application/json',
+        'Accept':        'application/json',
+        'User-Agent':    'BlBot/1.0 (+discord)',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', c => (data += c));
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch { resolve({ status: res.statusCode, body: null }); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+// ── Instagram: try Cobalt instances one by one ────────────────────────────────
 async function getInstagramVideoUrl(url) {
   const cleanUrl = url.split('?')[0].replace(/\/?$/, '/');
+  const errors = [];
 
-  // ── Attempt 1: tikwm.com — same domain that handles TikTok, also does Instagram
-  try {
-    const data = await fetchJson(
-      `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}`
-    );
-    if (data?.code === 0 && data?.data?.play) return data.data.play;
-    if (data?.code === 0 && data?.data?.video) return data.data.video;
-  } catch (e) {
-    console.warn(`[LinkEmbed] Instagram attempt 1 (tikwm) failed: ${e.message}`);
-  }
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await postJson(`${instance}/`, { url: cleanUrl, videoQuality: '720', downloadMode: 'auto' });
 
-  // ── Attempt 2: Scrape Instagram's own embed page for the video URL
-  try {
-    const html = await new Promise((resolve, reject) => {
-      const req = https.get(cleanUrl + 'embed/captioned/', {
-        timeout: 12000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Sec-Fetch-Mode': 'navigate',
-        },
-      }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          resolve(''); return;
+      if (res.body?.status === 'tunnel' || res.body?.status === 'redirect') {
+        if (res.body.url) {
+          console.log(`[LinkEmbed] Instagram resolved via ${instance}`);
+          return res.body.url;
         }
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', c => (data += c));
-        res.on('end', () => resolve(data));
-      });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    });
-
-    if (html) {
-      // Instagram embeds contain the video URL in a JSON blob inside the page
-      const patterns = [
-        /["']video_url["']\s*:\s*["'](https:[^"']+\.mp4[^"']*?)["']/,
-        /"contentUrl"\s*:\s*"(https:[^"]+\.mp4[^"]*)"/,
-        /src="(https:\/\/[^"]+\.mp4[^"]*)"/,
-      ];
-      for (const pattern of patterns) {
-        const match = html.match(pattern);
-        if (match) return match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
       }
+      // picker = multiple media items, grab first video
+      if (res.body?.status === 'picker' && Array.isArray(res.body.picker)) {
+        const video = res.body.picker.find(i => i.type === 'video') || res.body.picker[0];
+        if (video?.url) {
+          console.log(`[LinkEmbed] Instagram picker resolved via ${instance}`);
+          return video.url;
+        }
+      }
+      errors.push(`${instance}: status=${res.body?.status} error=${res.body?.error?.code || '?'}`);
+    } catch (e) {
+      errors.push(`${instance}: ${e.message}`);
     }
-  } catch (e) {
-    console.warn(`[LinkEmbed] Instagram attempt 2 (embed scrape) failed: ${e.message}`);
   }
 
-  // ── Attempt 3: igram.world API - lightweight, no auth needed
-  try {
-    const data = await fetchJson(
-      `https://igram.world/api/convert?url=${encodeURIComponent(cleanUrl)}&lang=en`
-    );
-    const videoUrl = data?.url ||
-      (Array.isArray(data?.media) ? data.media.find(m => m.type === 'video' || m.ext === 'mp4')?.url : null);
-    if (videoUrl) return videoUrl;
-  } catch (e) {
-    console.warn(`[LinkEmbed] Instagram attempt 3 (igram) failed: ${e.message}`);
-  }
-
-  throw new Error('All Instagram download attempts failed');
+  throw new Error(`All Cobalt instances failed:\n${errors.join('\n')}`);
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
