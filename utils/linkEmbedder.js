@@ -98,18 +98,112 @@ async function getTikTokVideoUrl(url) {
   throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
 }
 
-// ── Instagram: ssig.app public API ───────────────────────────────────────────
+// ── Instagram: multi-fallback video URL resolver ──────────────────────────────
 async function getInstagramVideoUrl(url) {
-  // ssig.app is a reliable no-key Instagram downloader API
-  const data = await fetchJson(
-    `https://ssig.app/api/instagram?url=${encodeURIComponent(url)}`
-  );
-  // Try common response shapes
-  const videoUrl = data?.url || data?.video_url || data?.data?.url || data?.data?.video_url
-                || (Array.isArray(data?.data) ? data.data.find(i => i.type === 'video')?.url : null)
-                || (Array.isArray(data?.media) ? data.media.find(i => i.type?.includes('video'))?.url : null);
-  if (videoUrl) return videoUrl;
-  throw new Error(`ssig: no video URL in response`);
+  // Normalise URL — strip query params and trailing slash variations
+  const cleanUrl = url.split('?')[0].replace(/\/?$/, '/');
+
+  // ── Attempt 1: snapinsta hidden API (POST form) ───────────────────────────
+  try {
+    const body = `q=${encodeURIComponent(cleanUrl)}&t=media&lang=en`;
+    const result = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'v3.snapinsta.app',
+        path: '/api/ajaxSearch',
+        method: 'POST',
+        timeout: 12000,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Origin': 'https://snapinsta.app',
+          'Referer': 'https://snapinsta.app/',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', c => (data += c));
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result?.data) {
+      // Parse the HTML response that contains download links
+      const html = result.data;
+      const mp4Match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/);
+      if (mp4Match) return mp4Match[1];
+      // Also check for dl.snapcdn.app token links
+      const snapMatch = html.match(/href="(https:\/\/dl\.snapcdn\.app[^"]*)"/);
+      if (snapMatch) return snapMatch[1];
+    }
+  } catch (e) {
+    console.warn(`[LinkEmbed] Instagram attempt 1 failed: ${e.message}`);
+  }
+
+  // ── Attempt 2: saveig hidden API ─────────────────────────────────────────
+  try {
+    const body = `q=${encodeURIComponent(cleanUrl)}&t=media&lang=en`;
+    const result = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'v3.saveig.app',
+        path: '/api/ajaxSearch',
+        method: 'POST',
+        timeout: 12000,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Origin': 'https://saveig.app',
+          'Referer': 'https://saveig.app/',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      };
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', c => (data += c));
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result?.data) {
+      const html = result.data;
+      const mp4Match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/);
+      if (mp4Match) return mp4Match[1];
+      const snapMatch = html.match(/href="(https:\/\/dl\.snapcdn\.app[^"]*)"/);
+      if (snapMatch) return snapMatch[1];
+    }
+  } catch (e) {
+    console.warn(`[LinkEmbed] Instagram attempt 2 failed: ${e.message}`);
+  }
+
+  // ── Attempt 3: instagramdownloader.io API ────────────────────────────────
+  try {
+    const data = await fetchJson(
+      `https://instagramdownloader.io/api/post?url=${encodeURIComponent(cleanUrl)}`
+    );
+    const videoUrl = data?.url || data?.video_url ||
+      (Array.isArray(data?.media) ? data.media.find(m => m.type === 'video')?.url : null);
+    if (videoUrl) return videoUrl;
+  } catch (e) {
+    console.warn(`[LinkEmbed] Instagram attempt 3 failed: ${e.message}`);
+  }
+
+  throw new Error('All Instagram download attempts failed');
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
