@@ -15,10 +15,14 @@ const POLL_MS      = 5 * 60 * 1000;   // every 5 minutes
 const MAX_NEW_PER_POLL = 5;            // safety cap: don't flood on catch-up
 
 // Feed sources tried in order — first success wins.
-// Nitter is dead in 2026 (all instances return 403/refused).
-// bird.makeup mirrors X accounts as Mastodon Atom feeds — most reliable in 2026.
-// twitrss.me scrapes X web pages as a fallback.
+// Nitter instances are unreliable but we cast a wide net so at least one works.
+// bird.makeup needs the account to be indexed first (may 404 on new accounts).
 const RSS_SOURCES = [
+  `https://nitter.poast.org/${USERNAME}/rss`,
+  `https://nitter.kavin.rocks/${USERNAME}/rss`,
+  `https://nttr.stream/${USERNAME}/rss`,
+  `https://nitter.moomoo.me/${USERNAME}/rss`,
+  `https://nitter.privacydev.net/${USERNAME}/rss`,
   `https://bird.makeup/users/${USERNAME}/feed.atom`,
   `https://twitrss.me/twitter_user_to_rss/?user=${USERNAME}`,
 ];
