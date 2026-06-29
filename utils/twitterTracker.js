@@ -7,8 +7,8 @@ const path    = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const USERNAME     = 'Emmaoinkk';
-const DISPLAY_NAME = 'Emma';
+const USERNAME     = 'Michael8uo2';
+const DISPLAY_NAME = 'Michael';
 const CHANNEL_ID   = '1437107048348123136';
 const AVATAR_URL   = `https://unavatar.io/x/${USERNAME}`;
 const POLL_MS      = 5 * 60 * 1000;   // every 5 minutes
