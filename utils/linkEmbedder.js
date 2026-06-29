@@ -100,107 +100,69 @@ async function getTikTokVideoUrl(url) {
 
 // ── Instagram: multi-fallback video URL resolver ──────────────────────────────
 async function getInstagramVideoUrl(url) {
-  // Normalise URL — strip query params and trailing slash variations
   const cleanUrl = url.split('?')[0].replace(/\/?$/, '/');
 
-  // ── Attempt 1: snapinsta hidden API (POST form) ───────────────────────────
-  try {
-    const body = `q=${encodeURIComponent(cleanUrl)}&t=media&lang=en`;
-    const result = await new Promise((resolve, reject) => {
-      const options = {
-        hostname: 'v3.snapinsta.app',
-        path: '/api/ajaxSearch',
-        method: 'POST',
-        timeout: 12000,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Origin': 'https://snapinsta.app',
-          'Referer': 'https://snapinsta.app/',
-          'Content-Length': Buffer.byteLength(body),
-        },
-      };
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', c => (data += c));
-        res.on('end', () => {
-          try { resolve(JSON.parse(data)); } catch { resolve(null); }
-        });
-      });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-      req.write(body);
-      req.end();
-    });
-
-    if (result?.data) {
-      // Parse the HTML response that contains download links
-      const html = result.data;
-      const mp4Match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/);
-      if (mp4Match) return mp4Match[1];
-      // Also check for dl.snapcdn.app token links
-      const snapMatch = html.match(/href="(https:\/\/dl\.snapcdn\.app[^"]*)"/);
-      if (snapMatch) return snapMatch[1];
-    }
-  } catch (e) {
-    console.warn(`[LinkEmbed] Instagram attempt 1 failed: ${e.message}`);
-  }
-
-  // ── Attempt 2: saveig hidden API ─────────────────────────────────────────
-  try {
-    const body = `q=${encodeURIComponent(cleanUrl)}&t=media&lang=en`;
-    const result = await new Promise((resolve, reject) => {
-      const options = {
-        hostname: 'v3.saveig.app',
-        path: '/api/ajaxSearch',
-        method: 'POST',
-        timeout: 12000,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Origin': 'https://saveig.app',
-          'Referer': 'https://saveig.app/',
-          'Content-Length': Buffer.byteLength(body),
-        },
-      };
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', c => (data += c));
-        res.on('end', () => {
-          try { resolve(JSON.parse(data)); } catch { resolve(null); }
-        });
-      });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-      req.write(body);
-      req.end();
-    });
-
-    if (result?.data) {
-      const html = result.data;
-      const mp4Match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/);
-      if (mp4Match) return mp4Match[1];
-      const snapMatch = html.match(/href="(https:\/\/dl\.snapcdn\.app[^"]*)"/);
-      if (snapMatch) return snapMatch[1];
-    }
-  } catch (e) {
-    console.warn(`[LinkEmbed] Instagram attempt 2 failed: ${e.message}`);
-  }
-
-  // ── Attempt 3: instagramdownloader.io API ────────────────────────────────
+  // ── Attempt 1: tikwm.com — same domain that handles TikTok, also does Instagram
   try {
     const data = await fetchJson(
-      `https://instagramdownloader.io/api/post?url=${encodeURIComponent(cleanUrl)}`
+      `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}`
     );
-    const videoUrl = data?.url || data?.video_url ||
-      (Array.isArray(data?.media) ? data.media.find(m => m.type === 'video')?.url : null);
+    if (data?.code === 0 && data?.data?.play) return data.data.play;
+    if (data?.code === 0 && data?.data?.video) return data.data.video;
+  } catch (e) {
+    console.warn(`[LinkEmbed] Instagram attempt 1 (tikwm) failed: ${e.message}`);
+  }
+
+  // ── Attempt 2: Scrape Instagram's own embed page for the video URL
+  try {
+    const html = await new Promise((resolve, reject) => {
+      const req = https.get(cleanUrl + 'embed/captioned/', {
+        timeout: 12000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Sec-Fetch-Mode': 'navigate',
+        },
+      }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          resolve(''); return;
+        }
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', c => (data += c));
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    });
+
+    if (html) {
+      // Instagram embeds contain the video URL in a JSON blob inside the page
+      const patterns = [
+        /["']video_url["']\s*:\s*["'](https:[^"']+\.mp4[^"']*?)["']/,
+        /"contentUrl"\s*:\s*"(https:[^"]+\.mp4[^"]*)"/,
+        /src="(https:\/\/[^"]+\.mp4[^"]*)"/,
+      ];
+      for (const pattern of patterns) {
+        const match = html.match(pattern);
+        if (match) return match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
+      }
+    }
+  } catch (e) {
+    console.warn(`[LinkEmbed] Instagram attempt 2 (embed scrape) failed: ${e.message}`);
+  }
+
+  // ── Attempt 3: igram.world API - lightweight, no auth needed
+  try {
+    const data = await fetchJson(
+      `https://igram.world/api/convert?url=${encodeURIComponent(cleanUrl)}&lang=en`
+    );
+    const videoUrl = data?.url ||
+      (Array.isArray(data?.media) ? data.media.find(m => m.type === 'video' || m.ext === 'mp4')?.url : null);
     if (videoUrl) return videoUrl;
   } catch (e) {
-    console.warn(`[LinkEmbed] Instagram attempt 3 failed: ${e.message}`);
+    console.warn(`[LinkEmbed] Instagram attempt 3 (igram) failed: ${e.message}`);
   }
 
   throw new Error('All Instagram download attempts failed');
