@@ -10,7 +10,7 @@ const USERNAME     = 'Michael8uo2';
 const DISPLAY_NAME = 'Mori';
 const CHANNEL_ID   = '1437107048348123136';
 const AVATAR_URL   = `https://unavatar.io/x/${USERNAME}`;
-const POLL_MS      = 5 * 60 * 1000;
+const POLL_MS      = 15 * 60 * 1000;
 const MAX_NEW_PER_POLL = 5;
 
 const STATE_FILE = path.join(__dirname, '../data/twitter_tracker.json');
@@ -181,7 +181,11 @@ async function poll(client) {
       }
     }
   } catch (err) {
-    console.error('[TwitterTracker] Poll error:', err.message);
+    if (err.message.includes('429')) {
+      console.warn('[TwitterTracker] Rate limited by X — will retry next poll cycle');
+    } else {
+      console.error('[TwitterTracker] Poll error:', err.message);
+    }
   }
 }
 
