@@ -14,12 +14,13 @@ const AVATAR_URL   = `https://unavatar.io/x/${USERNAME}`;
 const POLL_MS      = 5 * 60 * 1000;   // every 5 minutes
 const MAX_NEW_PER_POLL = 5;            // safety cap: don't flood on catch-up
 
-// RSS sources tried in order — first success wins
+// Feed sources tried in order — first success wins.
+// Nitter is dead in 2026 (all instances return 403/refused).
+// bird.makeup mirrors X accounts as Mastodon Atom feeds — most reliable in 2026.
+// twitrss.me scrapes X web pages as a fallback.
 const RSS_SOURCES = [
-  `https://rsshub.app/twitter/user/${USERNAME}`,
-  `https://nitter.privacydev.net/${USERNAME}/rss`,
-  `https://nitter.poast.org/${USERNAME}/rss`,
-  `https://xcancel.com/${USERNAME}/rss`,
+  `https://bird.makeup/users/${USERNAME}/feed.atom`,
+  `https://twitrss.me/twitter_user_to_rss/?user=${USERNAME}`,
 ];
 
 const STATE_FILE = path.join(__dirname, '../data/twitter_tracker.json');
@@ -109,32 +110,63 @@ function parseTweetId(url) {
   return m ? m[1] : null;
 }
 
-function parseRss(xml) {
+function parseFeed(xml) {
   const items = [];
-  const re = /<item>([\s\S]*?)<\/item>/g;
-  let m;
-  while ((m = re.exec(xml)) !== null) {
-    const raw = m[1];
-    const rawTitle  = tagContent(raw, 'title');
-    const desc      = tagContent(raw, 'description');
-    const link      = tagContent(raw, 'link');
-    const pubDate   = tagContent(raw, 'pubDate');
-    const tweetId   = parseTweetId(link) || parseTweetId(tagContent(raw, 'guid'));
-    if (!tweetId) continue;
+  const isAtom = xml.includes('<feed') && xml.includes('<entry>');
 
-    // Tweet text — strip "Username: " prefix and any HTML
-    const titleText = rawTitle.replace(/^[^:]+:\s*/, '').trim();
-    const descText  = stripHtml(desc);
-    const text      = descText.length > titleText.length ? descText : titleText;
+  if (isAtom) {
+    // ── Atom format (bird.makeup) ─────────────────────────────────────────
+    const re = /<entry>([\s\S]*?)<\/entry>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      const raw = m[1];
 
-    // Skip retweets and replies
-    if (/^RT @/i.test(text) || text.startsWith('@')) continue;
+      // Atom uses <id> for the URL and <updated> for date
+      const id      = tagContent(raw, 'id');
+      const updated = tagContent(raw, 'updated');
+      const title   = tagContent(raw, 'title');
+      const content = tagContent(raw, 'content') || tagContent(raw, 'summary');
 
-    const tweetUrl = `https://x.com/${USERNAME}/status/${tweetId}`;
-    const images   = extractImages(desc);
+      const tweetId = parseTweetId(id);
+      if (!tweetId) continue;
 
-    items.push({ tweetId, tweetUrl, text, images, pubDate });
+      const titleText = stripHtml(title).replace(/^[^:]+:\s*/, '').trim();
+      const bodyText  = stripHtml(content);
+      const text      = bodyText.length > titleText.length ? bodyText : titleText;
+
+      if (/^RT @/i.test(text) || text.startsWith('@')) continue;
+
+      const tweetUrl = `https://x.com/${USERNAME}/status/${tweetId}`;
+      const images   = extractImages(content);
+
+      items.push({ tweetId, tweetUrl, text, images, pubDate: updated });
+    }
+  } else {
+    // ── RSS format (twitrss.me and others) ───────────────────────────────
+    const re = /<item>([\s\S]*?)<\/item>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      const raw = m[1];
+      const rawTitle = tagContent(raw, 'title');
+      const desc     = tagContent(raw, 'description');
+      const link     = tagContent(raw, 'link');
+      const pubDate  = tagContent(raw, 'pubDate');
+      const tweetId  = parseTweetId(link) || parseTweetId(tagContent(raw, 'guid'));
+      if (!tweetId) continue;
+
+      const titleText = rawTitle.replace(/^[^:]+:\s*/, '').trim();
+      const descText  = stripHtml(desc);
+      const text      = descText.length > titleText.length ? descText : titleText;
+
+      if (/^RT @/i.test(text) || text.startsWith('@')) continue;
+
+      const tweetUrl = `https://x.com/${USERNAME}/status/${tweetId}`;
+      const images   = extractImages(desc);
+
+      items.push({ tweetId, tweetUrl, text, images, pubDate });
+    }
   }
+
   return items;
 }
 
@@ -182,13 +214,17 @@ async function fetchTweets() {
   for (const src of RSS_SOURCES) {
     try {
       const xml = await fetchUrl(src);
-      if (xml && xml.includes('<item>')) return parseRss(xml);
+      if (xml && (xml.includes('<item>') || xml.includes('<entry>'))) {
+        const items = parseFeed(xml);
+        if (items.length > 0) return items;
+        console.warn(`[TwitterTracker] Source returned feed but 0 usable tweets (${src})`);
+      }
     } catch (err) {
       lastErr = err;
       console.warn(`[TwitterTracker] Source failed (${src}): ${err.message}`);
     }
   }
-  throw lastErr || new Error('All RSS sources failed');
+  throw lastErr || new Error('All feed sources failed');
 }
 
 async function poll(client) {
