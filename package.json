@@ -4,7 +4,7 @@
   "description": "Combined channel rotator and attachment counter bot with economy system",
   "main": "index.js",
   "scripts": {
-    "start": "pip install yt-dlp --quiet --break-system-packages 2>/dev/null; pip3 install yt-dlp --quiet --break-system-packages 2>/dev/null; NODE_PATH=./vendor node index.js",
+    "start": "python3 -m pip install yt-dlp --quiet --break-system-packages; NODE_PATH=./vendor node index.js",
     "dev": "NODE_PATH=./vendor nodemon index.js"
   },
   "dependencies": {
