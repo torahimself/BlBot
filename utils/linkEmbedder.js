@@ -98,32 +98,56 @@ async function getTikTokVideoUrl(url) {
   throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
 }
 
-// ── Instagram Reels: yt-dlp with logged-in session cookies ───────────────────
-// Instagram blocks anonymous/server requests for video URLs. The only reliable
-// fix is authenticating as a real (burner) account via exported browser cookies.
-// Place a Netscape-format cookies.txt at data/instagram_cookies.txt — see README.
+// ── Instagram Reels: yt-dlp shell command with session cookies ────────────────
+// Instagram blocks anonymous server requests. Requires cookies from a logged-in
+// burner account. Place Netscape-format cookies at data/instagram_cookies.txt
+const { execFile } = require('child_process');
 const IG_COOKIES_FILE = path.join(__dirname, '../data/instagram_cookies.txt');
 
-let ytDlp = null;
-try { ytDlp = require('yt-dlp-exec'); } catch { /* checked again at call time */ }
+// Finds yt-dlp binary: checks common paths Pebble might have it
+function findYtDlp() {
+  const candidates = [
+    '/usr/local/bin/yt-dlp',
+    '/usr/bin/yt-dlp',
+    '/home/container/.local/bin/yt-dlp',
+    '/home/container/yt-dlp',
+    'yt-dlp', // fallback: rely on PATH
+  ];
+  for (const p of candidates) {
+    try {
+      if (p === 'yt-dlp' || require('fs').existsSync(p)) return p;
+    } catch {}
+  }
+  return 'yt-dlp';
+}
+
+function runYtDlp(url, outputPath, cookiesFile) {
+  return new Promise((resolve, reject) => {
+    const bin  = findYtDlp();
+    const args = [
+      url,
+      '-o', outputPath,
+      '--cookies', cookiesFile,
+      '--no-playlist',
+      '-f', 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '--merge-output-format', 'mp4',
+      '--max-filesize', '24M',
+      '--quiet',
+      '--no-warnings',
+      '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    ];
+    execFile(bin, args, { timeout: 90_000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr?.trim() || err.message));
+      resolve();
+    });
+  });
+}
 
 async function downloadInstagramReel(url, tmpFile) {
-  if (!ytDlp) throw new Error('yt-dlp-exec is not installed — add it via Pebble Node.js Packages');
   if (!fs.existsSync(IG_COOKIES_FILE)) {
-    throw new Error('Missing data/instagram_cookies.txt — Instagram reels need a logged-in cookie file to download');
+    throw new Error('Missing data/instagram_cookies.txt — upload your Instagram cookies via Pebble File Manager');
   }
-
-  await ytDlp(url, {
-    output: tmpFile,
-    cookies: IG_COOKIES_FILE,
-    noPlaylist: true,
-    format: 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    mergeOutputFormat: 'mp4',
-    maxFilesize: '24M',
-    quiet: true,
-    noWarnings: true,
-    addHeader: ['User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'],
-  });
+  await runYtDlp(url, tmpFile, IG_COOKIES_FILE);
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
