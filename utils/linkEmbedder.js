@@ -98,46 +98,38 @@ async function getTikTokVideoUrl(url) {
   throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
 }
 
-// ── Instagram Reels: yt-dlp-exec with session cookies ────────────────────────
+// ── Instagram Reels: yt-dlp via Python (pip install yt-dlp runs on every boot) ─
+const { execFile } = require('child_process');
 const IG_COOKIES_FILE = path.join(__dirname, '../data/instagram_cookies.txt');
 
-// yt-dlp-exec is vendored in /vendor/ folder, loaded via NODE_PATH=./vendor in package.json start script
-function loadYtDlpExec() {
-  const candidates = [
-    'yt-dlp-exec',
-    path.join(__dirname, '../vendor/yt-dlp-exec'),
-    path.join(__dirname, '../node_modules/yt-dlp-exec'),
-    '/home/container/node_modules/yt-dlp-exec',
-  ];
-  for (const p of candidates) {
-    try {
-      const mod = require(p);
-      console.log(`[LinkEmbed] ✅ yt-dlp-exec loaded from: ${p}`);
-      return mod;
-    } catch {}
-  }
-  console.error('[LinkEmbed] ❌ yt-dlp-exec not found in any location');
-  return null;
+function runYtDlp(url, outputPath, cookiesFile) {
+  return new Promise((resolve, reject) => {
+    // Use python3 -m yt_dlp — works because pip install yt-dlp runs in package.json start script
+    const args = [
+      '-m', 'yt_dlp',
+      url,
+      '-o', outputPath,
+      '--cookies', cookiesFile,
+      '--no-playlist',
+      '-f', 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '--merge-output-format', 'mp4',
+      '--max-filesize', '24M',
+      '--quiet',
+      '--no-warnings',
+      '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    ];
+    execFile('python3', args, { timeout: 90_000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(stderr?.trim() || err.message));
+      resolve();
+    });
+  });
 }
 
 async function downloadInstagramReel(url, tmpFile) {
   if (!fs.existsSync(IG_COOKIES_FILE)) {
     throw new Error('Missing data/instagram_cookies.txt — upload your Instagram cookies via Pebble File Manager');
   }
-  const ytDlpExec = loadYtDlpExec();
-  if (!ytDlpExec) throw new Error('yt-dlp-exec not found — install it via Pebble Node.js Packages panel');
-
-  await ytDlpExec(url, {
-    output: tmpFile,
-    cookies: IG_COOKIES_FILE,
-    noPlaylist: true,
-    format: 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    mergeOutputFormat: 'mp4',
-    maxFilesize: '24M',
-    quiet: true,
-    noWarnings: true,
-    addHeader: ['User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'],
-  });
+  await runYtDlp(url, tmpFile, IG_COOKIES_FILE);
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
