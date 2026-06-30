@@ -104,7 +104,6 @@ const IG_COOKIES_FILE = path.join(__dirname, '../data/instagram_cookies.txt');
 
 function runYtDlp(url, outputPath, cookiesFile) {
   return new Promise((resolve, reject) => {
-    // Use python3 -m yt_dlp — works because pip install yt-dlp runs in package.json start script
     const args = [
       '-m', 'yt_dlp',
       url,
@@ -118,10 +117,24 @@ function runYtDlp(url, outputPath, cookiesFile) {
       '--no-warnings',
       '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     ];
-    execFile('python3', args, { timeout: 90_000 }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(stderr?.trim() || err.message));
-      resolve();
-    });
+
+    // Try each python executable until one works
+    const pythons = ['python3', 'python', '/usr/local/bin/python3', '/usr/bin/python3'];
+    let idx = 0;
+
+    function tryNext() {
+      if (idx >= pythons.length) return reject(new Error('No working python3 with yt_dlp found'));
+      const py = pythons[idx++];
+      execFile(py, args, { timeout: 90_000 }, (err, stdout, stderr) => {
+        if (err && stderr?.includes('No module named yt_dlp')) {
+          console.warn(`[LinkEmbed] yt_dlp not found in ${py}, trying next...`);
+          return tryNext();
+        }
+        if (err) return reject(new Error(stderr?.trim() || err.message));
+        resolve();
+      });
+    }
+    tryNext();
   });
 }
 
