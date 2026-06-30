@@ -10,7 +10,7 @@ const USERNAME     = 'Michael8uo2';
 const DISPLAY_NAME = 'Mori';
 const CHANNEL_ID   = '1437107048348123136';
 const AVATAR_URL   = `https://unavatar.io/x/${USERNAME}`;
-const POLL_MS      = 30 * 60 * 1000;
+const POLL_MS      = 45 * 60 * 1000; // 45 minutes base
 const MAX_NEW_PER_POLL = 5;
 
 const STATE_FILE = path.join(__dirname, '../data/twitter_tracker.json');
@@ -144,67 +144,90 @@ function buildRow(tweet) {
 }
 
 // ── Polling ───────────────────────────────────────────────────────────────────
-async function poll(client) {
-  try {
-    const channel = client.channels.cache.get(CHANNEL_ID);
-    if (!channel) return;
-
-    const items = await fetchTimeline();
-    if (!items.length) return;
-
-    const lastId = loadLastId();
-
-    if (!lastId) {
-      saveLastId(items[0].tweetId);
-      console.log(`[TwitterTracker] First run — bookmarked @${USERNAME} tweet ${items[0].tweetId}`);
-      return;
-    }
-
-    const newTweets = [];
-    for (const item of items) {
-      if (item.tweetId === lastId) break;
-      newTweets.push(item);
-    }
-
-    if (!newTweets.length) return;
-
-    saveLastId(items[0].tweetId);
-
-    const toPost = newTweets.reverse().slice(-MAX_NEW_PER_POLL);
-    for (const tweet of toPost) {
-      try {
-        await channel.send({ embeds: [buildEmbed(tweet)], components: [buildRow(tweet)] });
-        console.log(`[TwitterTracker] ✅ Posted @${USERNAME} tweet ${tweet.tweetId}`);
-        await new Promise(r => setTimeout(r, 1200));
-      } catch (err) {
-        console.error(`[TwitterTracker] Send error (${tweet.tweetId}):`, err.message);
-      }
-    }
-  } catch (err) {
-    if (err.message.includes('429')) {
-      console.warn('[TwitterTracker] Rate limited by X — will retry next poll cycle');
-    } else {
-      console.error('[TwitterTracker] Poll error:', err.message);
-    }
-  }
-}
-
 // ── Start ─────────────────────────────────────────────────────────────────────
 let _started = false;
+let _backoffMs = 0; // extra wait added after a 429
 
 function startTracker(client) {
   if (_started) return;
   _started = true;
   console.log(`🐦 [TwitterTracker] Tracking @${USERNAME} via X syndication API → #${CHANNEL_ID} (every ~${POLL_MS / 60000} min)`);
-  // Initial poll after 30s
-  setTimeout(() => poll(client), 30_000);
 
-  // Subsequent polls at 30 min ± up to 5 min jitter to avoid hitting rate limits
-  const scheduleNext = () => {
-    const jitter = Math.floor(Math.random() * 5 * 60 * 1000);
-    setTimeout(() => { poll(client); scheduleNext(); }, POLL_MS + jitter);
+  const scheduleNext = (extraMs = 0) => {
+    const jitter = Math.floor(Math.random() * 5 * 60 * 1000); // ±5 min
+    const delay  = POLL_MS + jitter + extraMs;
+    setTimeout(async () => {
+      try {
+        const channel = client.channels.cache.get(CHANNEL_ID);
+        if (!channel) { scheduleNext(); return; }
+
+        const items = await fetchTimeline();
+        _backoffMs = 0; // reset backoff on success
+
+        if (!items.length) { scheduleNext(); return; }
+
+        const lastId = loadLastId();
+        if (!lastId) {
+          saveLastId(items[0].tweetId);
+          console.log(`[TwitterTracker] First run — bookmarked @${USERNAME} tweet ${items[0].tweetId}`);
+          scheduleNext(); return;
+        }
+
+        const newTweets = [];
+        for (const item of items) {
+          if (item.tweetId === lastId) break;
+          newTweets.push(item);
+        }
+
+        if (newTweets.length) {
+          saveLastId(items[0].tweetId);
+          const toPost = newTweets.reverse().slice(-MAX_NEW_PER_POLL);
+          for (const tweet of toPost) {
+            try {
+              await channel.send({ embeds: [buildEmbed(tweet)], components: [buildRow(tweet)] });
+              console.log(`[TwitterTracker] ✅ Posted @${USERNAME} tweet ${tweet.tweetId}`);
+              await new Promise(r => setTimeout(r, 1200));
+            } catch (err) {
+              console.error(`[TwitterTracker] Send error (${tweet.tweetId}):`, err.message);
+            }
+          }
+        }
+
+        scheduleNext();
+      } catch (err) {
+        if (err.message.includes('429')) {
+          // Double backoff each time (15 min → 30 min → 60 min, capped at 2 hrs)
+          _backoffMs = Math.min((_backoffMs || 15 * 60 * 1000) * 2, 2 * 60 * 60 * 1000);
+          console.warn(`[TwitterTracker] Rate limited by X — backing off ${_backoffMs / 60000} extra min`);
+          scheduleNext(_backoffMs);
+        } else {
+          console.error('[TwitterTracker] Poll error:', err.message);
+          scheduleNext();
+        }
+      }
+    }, delay);
   };
-  setTimeout(scheduleNext, POLL_MS);
+
+  // First poll after 60s to let Discord fully connect
+  setTimeout(async () => {
+    try {
+      const channel = client.channels.cache.get(CHANNEL_ID);
+      if (!channel) { scheduleNext(); return; }
+      const items = await fetchTimeline();
+      if (items.length && !loadLastId()) {
+        saveLastId(items[0].tweetId);
+        console.log(`[TwitterTracker] First run — bookmarked @${USERNAME} tweet ${items[0].tweetId}`);
+      }
+    } catch (err) {
+      if (err.message.includes('429')) {
+        _backoffMs = 15 * 60 * 1000;
+        console.warn(`[TwitterTracker] Rate limited on first poll — waiting extra ${_backoffMs / 60000} min`);
+      } else {
+        console.error('[TwitterTracker] First poll error:', err.message);
+      }
+    }
+    scheduleNext(_backoffMs);
+  }, 60_000);
 }
 
 module.exports = { startTracker };
