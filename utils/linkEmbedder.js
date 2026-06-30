@@ -111,7 +111,13 @@ function loadYtDlpExec() {
     '/home/container/.npm-global/lib/node_modules/yt-dlp-exec',
   ];
   for (const p of candidates) {
-    try { return require(p); } catch {}
+    try {
+      const mod = require(p);
+      console.log(`[LinkEmbed] ✅ yt-dlp-exec found at: ${p}`);
+      return mod;
+    } catch (e) {
+      console.log(`[LinkEmbed] yt-dlp-exec not at: ${p} (${e.message.slice(0, 60)})`);
+    }
   }
   return null;
 }
