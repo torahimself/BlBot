@@ -120,7 +120,6 @@ function runYtDlp(url, outputPath, cookiesFile) {
 
     // Try each python executable until one works
     const pythons = [
-      '/usr/local/bin/python3',
       '/usr/bin/python3',
       'python3',
     ];
