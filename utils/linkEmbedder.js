@@ -99,16 +99,30 @@ async function getTikTokVideoUrl(url) {
 }
 
 // ── Instagram Reels: yt-dlp-exec with session cookies ────────────────────────
-// yt-dlp-exec is in package.json so Pebble installs it on every boot via npm install.
-// It bundles its own yt-dlp binary — no system binary needed.
-// Cookies from a logged-in burner Instagram account go in data/instagram_cookies.txt
-const ytDlpExec = require('yt-dlp-exec');
 const IG_COOKIES_FILE = path.join(__dirname, '../data/instagram_cookies.txt');
+
+// Pebble installs packages to a non-standard path — search all candidates
+function loadYtDlpExec() {
+  const candidates = [
+    'yt-dlp-exec',
+    '/home/container/node_modules/yt-dlp-exec',
+    path.join(__dirname, '../node_modules/yt-dlp-exec'),
+    path.join(__dirname, '../../node_modules/yt-dlp-exec'),
+    '/home/container/.npm-global/lib/node_modules/yt-dlp-exec',
+  ];
+  for (const p of candidates) {
+    try { return require(p); } catch {}
+  }
+  return null;
+}
 
 async function downloadInstagramReel(url, tmpFile) {
   if (!fs.existsSync(IG_COOKIES_FILE)) {
     throw new Error('Missing data/instagram_cookies.txt — upload your Instagram cookies via Pebble File Manager');
   }
+  const ytDlpExec = loadYtDlpExec();
+  if (!ytDlpExec) throw new Error('yt-dlp-exec not found — install it via Pebble Node.js Packages panel');
+
   await ytDlpExec(url, {
     output: tmpFile,
     cookies: IG_COOKIES_FILE,
