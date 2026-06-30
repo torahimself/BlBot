@@ -101,32 +101,22 @@ async function getTikTokVideoUrl(url) {
 // ── Instagram Reels: yt-dlp-exec with session cookies ────────────────────────
 const IG_COOKIES_FILE = path.join(__dirname, '../data/instagram_cookies.txt');
 
-// Pebble installs packages to a non-standard path — search all candidates
+// yt-dlp-exec is vendored in /vendor/ folder, loaded via NODE_PATH=./vendor in package.json start script
 function loadYtDlpExec() {
-  // Log Node's module search paths so we can find where Pebble puts packages
-  console.log('[LinkEmbed] Module paths:', JSON.stringify(module.paths.slice(0, 6)));
-  console.log('[LinkEmbed] NODE_PATH:', process.env.NODE_PATH || '(not set)');
-
   const candidates = [
     'yt-dlp-exec',
-    '/home/container/node_modules/yt-dlp-exec',
+    path.join(__dirname, '../vendor/yt-dlp-exec'),
     path.join(__dirname, '../node_modules/yt-dlp-exec'),
-    path.join(__dirname, '../../node_modules/yt-dlp-exec'),
-    '/home/container/.npm-global/lib/node_modules/yt-dlp-exec',
-    '/usr/local/lib/node_modules/yt-dlp-exec',
-    '/usr/lib/node_modules/yt-dlp-exec',
-    '/root/.npm-global/lib/node_modules/yt-dlp-exec',
-    '/home/container/.local/lib/node_modules/yt-dlp-exec',
+    '/home/container/node_modules/yt-dlp-exec',
   ];
   for (const p of candidates) {
     try {
       const mod = require(p);
-      console.log(`[LinkEmbed] ✅ yt-dlp-exec found at: ${p}`);
+      console.log(`[LinkEmbed] ✅ yt-dlp-exec loaded from: ${p}`);
       return mod;
-    } catch (e) {
-      console.log(`[LinkEmbed] ✗ ${p}`);
-    }
+    } catch {}
   }
+  console.error('[LinkEmbed] ❌ yt-dlp-exec not found in any location');
   return null;
 }
 
