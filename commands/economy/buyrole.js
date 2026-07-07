@@ -4,7 +4,7 @@ const allowedChannels = ['1464140979148689550'];
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('buyrole')
-        .setDescription('Purchase a custom role (60000 coins)'),
+        .setDescription('Purchase a custom role (100000 coins)'),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
             return interaction.reply({ content: `❌ This command can only be used in <#1464140979148689550>.`, flags: 64 });
