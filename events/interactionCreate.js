@@ -7,7 +7,7 @@ const gameHandler = require('../handlers/gameHandler.js');
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
 
-const { createCustomRole, editRole, getBalance, ROLE_PRICE, updateBalance } = shopManager;
+const { createCustomRole, editRole, extendRole, getBalance, ROLE_PRICE, updateBalance } = shopManager;
 
 // Game button/modal prefixes — routed to gameHandler
 const GAME_BUTTON_PREFIXES = ['coinflip_', 'numberduel_', 'bj_', 'lms_', 'rr_', 'hp_'];
@@ -71,6 +71,34 @@ module.exports = {
           if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({ content: '❌ An error occurred.', flags: 64 }).catch(() => {});
           }
+        }
+        return;
+      }
+
+      // --- Extend Role ---
+      if (interaction.customId.startsWith('extend_role_')) {
+        const roleId = interaction.customId.slice('extend_role_'.length);
+        const userId = interaction.user.id;
+
+        // Verify the user owns this role
+        const db = require('../utils/economy/database.js');
+        const roleRow = await new Promise((resolve) => {
+          db.get('SELECT ownerId, expirationDate FROM purchased_roles WHERE roleId = ?', [roleId], (err, row) => resolve(row));
+        });
+
+        if (!roleRow) {
+          return interaction.reply({ content: '❌ Role not found in database. It may have already expired.', flags: 64 });
+        }
+        if (roleRow.ownerId !== userId) {
+          return interaction.reply({ content: '❌ You do not own this role.', flags: 64 });
+        }
+
+        const result = await extendRole(roleId, userId);
+        if (result.success) {
+          const newExpiry = Date.now() + (30 * 24 * 60 * 60 * 1000);
+          await interaction.reply({ content: `✅ Your role has been extended for 30 days! New expiry: <t:${Math.floor(newExpiry / 1000)}:R>`, flags: 64 });
+        } else {
+          await interaction.reply({ content: `❌ ${result.message}`, flags: 64 });
         }
         return;
       }
