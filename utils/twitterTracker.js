@@ -121,7 +121,10 @@ function fetchHtml(url, timeoutMs = 15000) {
 
 // ── Fetch timeline for one account (tries direct, then proxy fallbacks) ──────
 async function fetchTimeline(username) {
-  const targetUrl = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${username}`;
+  // Cache-bust: syndication.twitter.com is fronted by a CDN that can serve a
+  // stale snapshot for several minutes. Appending a changing query param
+  // forces a fresh fetch instead of a cached one.
+  const targetUrl = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${username}?dnt=1&_=${Date.now()}`;
   let lastErr;
 
   for (const method of FETCH_METHODS) {
@@ -219,6 +222,8 @@ async function pollAccount(account, channel, state) {
   const username = account.username;
   const acctState = getAccountState(state, username);
 
+  console.log(`[TwitterTracker] Polling @${username}...`);
+
   let items;
   try {
     items = await fetchTimeline(username);
@@ -281,6 +286,7 @@ async function pollAccount(account, channel, state) {
       }
     }
   } else {
+    console.log(`[TwitterTracker] @${username} checked — no new tweets (latest seen: ${items[0].tweetId}, tracking since: ${lastId})`);
     saveState(state);
   }
 
