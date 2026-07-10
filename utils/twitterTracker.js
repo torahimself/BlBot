@@ -47,10 +47,14 @@ function randomUA() {
 // Fetch methods tried in order. If the direct request gets blocked/rate-limited,
 // we retry the SAME request routed through a public proxy, so it hits Twitter
 // from a different IP instead of Bubblehost's (likely already-flagged) IP.
+// NOTE: corsproxy.io was removed — its free tier now only accepts requests
+// from dev origins (localhost/github.io/ngrok/trycloudflare), so it silently
+// rejects requests coming from a real server like Bubblehost.
 const FETCH_METHODS = [
-  { name: 'direct',     build: (url) => url },
+  { name: 'direct',    build: (url) => url },
   { name: 'allorigins', build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` },
-  { name: 'corsproxy',  build: (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}` },
+  { name: 'codetabs',  build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}` },
+  { name: 'x2u',       build: (url) => `https://cors.x2u.in/${url}` },
 ];
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -170,11 +174,10 @@ async function fetchTimeline(username) {
       return tweets;
     } catch (err) {
       lastErr = err;
-      // Only fall through to the next method on blocking-type errors.
-      // (429 = rate limited, 403 = forbidden, timeout = likely also blocked)
-      const isBlockingError = err.statusCode === 429 || err.statusCode === 403 || err.message === 'timeout';
-      if (!isBlockingError) throw err; // real parsing/logic error, no point retrying via proxy
-      // else: try next method in the loop
+      console.warn(`[TwitterTracker]   ↳ ${method.name} failed for @${username}: ${err.statusCode ? 'HTTP ' + err.statusCode : err.message}`);
+      // Try the next method regardless of error type — a parsing failure via
+      // one proxy (e.g. it wraps content differently) doesn't mean the next
+      // proxy will fail the same way, so always exhaust the full chain.
     }
   }
 
