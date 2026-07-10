@@ -76,9 +76,15 @@ function saveState(state) {
 }
 
 function getAccountState(state, username) {
-  if (!state[username]) {
+  const existing = state[username];
+
+  // Migrate old format where state[username] was just a plain tweetId string
+  if (typeof existing === 'string') {
+    state[username] = { lastTweetId: existing, backoffMs: 0, failCount: 0 };
+  } else if (!existing || typeof existing !== 'object') {
     state[username] = { lastTweetId: null, backoffMs: 0, failCount: 0 };
   }
+
   return state[username];
 }
 
