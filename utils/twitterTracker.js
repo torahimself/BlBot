@@ -229,10 +229,10 @@ function buildRow(tweet) {
 async function postTweet(channel, tweet, account) {
   await channel.send({ embeds: [buildEmbed(tweet, account)], components: [buildRow(tweet)] });
   if (tweet.videoUrl) {
-    // Spoiler-wrapping hides the raw URL text but Discord still auto-generates
-    // the playable video embed underneath — Discord has no embed field that
-    // can natively play video, so this is the closest real equivalent.
-    await channel.send({ content: `||${tweet.videoUrl}||` });
+    // NOTE: spoiler-wrapping (||url||) was tried to hide the raw link, but it
+    // suppresses Discord's auto-embed generation entirely — no video plays
+    // at all. Plain link is the only way that reliably renders the video.
+    await channel.send({ content: tweet.videoUrl });
   }
 }
 
