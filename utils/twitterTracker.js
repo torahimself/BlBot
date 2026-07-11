@@ -467,62 +467,6 @@ async function pollAccount(account, channel, state) {
   return BASE_INTERVAL_MS + Math.floor(Math.random() * JITTER_MS);
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// 🧪 TESTING THINGY — remove this whole block (and its call in startTracker)
-// when the user says "remove the testing thingy". Force-posts each account's
-// current latest original tweet once on startup, regardless of bookmark
-// state, so we can verify the fetch pipeline actually works end-to-end.
-// ══════════════════════════════════════════════════════════════════════════
-const TESTING_THINGY_ENABLED = true;
-
-async function runTestingThingy(client, state) {
-  console.log('🧪 [TestingThingy] Running one-time test post (last 4 tweets, @Michael8uo2 only)...');
-  const channel = client.channels.cache.get(CHANNEL_ID);
-  if (!channel) {
-    console.error(`🧪 [TestingThingy] Channel ${CHANNEL_ID} not found — aborting test.`);
-    return;
-  }
-
-  const account = ACCOUNTS.find(a => a.username === 'Michael8uo2');
-  if (!account) {
-    console.error('🧪 [TestingThingy] Michael8uo2 not found in ACCOUNTS list — aborting test.');
-    return;
-  }
-
-  try {
-    const items = await fetchTimeline(account.username);
-    if (!items.length) {
-      console.warn(`🧪 [TestingThingy] @${account.username} — no tweets found to test with.`);
-      return;
-    }
-
-    // items are newest-first; take the 4 most recent, post oldest-to-newest
-    const toPost = items.slice(0, 4).reverse();
-    for (const tweet of toPost) {
-      try {
-        await postTweet(channel, tweet, account);
-        console.log(`🧪 [TestingThingy] ✅ Posted @${account.username}'s tweet (${tweet.tweetId}) as a test.`);
-      } catch (err) {
-        console.error(`🧪 [TestingThingy] ❌ Failed to post tweet ${tweet.tweetId}: ${err.message}`);
-      }
-      await new Promise(r => setTimeout(r, 1500));
-    }
-
-    // Sync the bookmark to the newest of these so the normal tracker doesn't
-    // see a gap on its next poll and dump a flood/duplicate of these same tweets.
-    const acctState = getAccountState(state, account.username);
-    acctState.lastTweetId = items[0].tweetId;
-    saveState(state);
-  } catch (err) {
-    console.error(`🧪 [TestingThingy] ❌ Failed to fetch for @${account.username}: ${err.message}`);
-  }
-
-  console.log('🧪 [TestingThingy] Done. This does NOT affect normal tracking beyond bookmarking what it just posted.');
-}
-// ══════════════════════════════════════════════════════════════════════════
-// END TESTING THINGY
-// ══════════════════════════════════════════════════════════════════════════
-
 // ── Start ─────────────────────────────────────────────────────────────────────
 let _started = false;
 
@@ -561,11 +505,6 @@ async function startTracker(client) {
   scraperReady = await initScraper();
 
   const state = loadState();
-
-  // 🧪 TESTING THINGY — remove this if-block when told to
-  if (TESTING_THINGY_ENABLED && scraperReady) {
-    setTimeout(() => runTestingThingy(client, state), 5_000);
-  }
 
   if (!scraperReady) {
     console.error('🐦 [TwitterTracker] Skipping normal poll scheduling until authentication succeeds. Set TWITTER_COOKIES and restart the bot.');
