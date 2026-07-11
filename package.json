@@ -12,7 +12,8 @@
     "express": "^4.18.2",
     "node-cron": "^3.0.3",
     "sqlite3": "^5.1.6",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "@the-convocation/twitter-scraper": "^0.22.3"
   },
   "keywords": [
     "discord",
