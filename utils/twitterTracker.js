@@ -1,9 +1,10 @@
 'use strict';
 
+const https   = require('https');
 const fs      = require('fs');
 const path    = require('path');
 const { Scraper } = require('@the-convocation/twitter-scraper');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Add or remove accounts here. Each needs a username (X handle) and display name.
@@ -222,17 +223,58 @@ function buildRow(tweet) {
   );
 }
 
-// Posts one tweet to the channel. If it has a video/GIF, the direct video
-// URL is sent as a plain follow-up message so Discord natively renders a
-// playable video (Discord embeds can't play video via setImage — that only
-// works for static images/GIF-as-image).
+// Discord's default (non-boosted) upload limit is 10MB. Stay safely under
+// that since we don't know the server's boost tier; if a video is bigger
+// than this, fall back to posting the plain link instead of failing silently.
+const MAX_ATTACHMENT_BYTES = 9 * 1024 * 1024; // 9MB safety margin
+
+function fetchBuffer(url, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: timeoutMs }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchBuffer(res.headers.location, timeoutMs).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      let total = 0;
+      res.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > MAX_ATTACHMENT_BYTES * 1.5) {
+          req.destroy();
+          return reject(new Error('TOO_LARGE'));
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+// Posts one tweet to the channel. If it has a video/GIF, we download it
+// server-side and upload it as a native Discord attachment (no visible
+// link at all — Discord embeds can't play video via setImage, and
+// spoiler-wrapping a link suppresses the auto-embed entirely, so a native
+// upload is the only way to get both "no visible URL" and working playback).
+// Falls back to a plain link if the file is too large or the download fails.
 async function postTweet(channel, tweet, account) {
   await channel.send({ embeds: [buildEmbed(tweet, account)], components: [buildRow(tweet)] });
+
   if (tweet.videoUrl) {
-    // NOTE: spoiler-wrapping (||url||) was tried to hide the raw link, but it
-    // suppresses Discord's auto-embed generation entirely — no video plays
-    // at all. Plain link is the only way that reliably renders the video.
-    await channel.send({ content: tweet.videoUrl });
+    try {
+      const buffer = await fetchBuffer(tweet.videoUrl);
+      if (buffer.length > MAX_ATTACHMENT_BYTES) {
+        throw new Error('TOO_LARGE');
+      }
+      const attachment = new AttachmentBuilder(buffer, { name: `${tweet.tweetId}.mp4` });
+      await channel.send({ files: [attachment] });
+    } catch (err) {
+      console.warn(`[TwitterTracker] Could not upload video natively for ${tweet.tweetId} (${err.message}) — falling back to link.`);
+      await channel.send({ content: tweet.videoUrl });
+    }
   }
 }
 
