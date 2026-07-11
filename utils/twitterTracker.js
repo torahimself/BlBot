@@ -3,6 +3,7 @@
 const https   = require('https');
 const fs      = require('fs');
 const path    = require('path');
+const { execFile } = require('child_process');
 const { Scraper } = require('@the-convocation/twitter-scraper');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
 
@@ -264,21 +265,139 @@ async function postTweet(channel, tweet, account) {
   await channel.send({ embeds: [buildEmbed(tweet, account)], components: [buildRow(tweet)] });
 
   if (tweet.videoUrl) {
+    let mp4Buffer;
     try {
-      const buffer = await fetchBuffer(tweet.videoUrl);
-      if (buffer.length > MAX_ATTACHMENT_BYTES) {
-        throw new Error('TOO_LARGE');
-      }
-      const attachment = new AttachmentBuilder(buffer, { name: `${tweet.tweetId}.mp4` });
-      await channel.send({ files: [attachment] });
+      mp4Buffer = await fetchBuffer(tweet.videoUrl);
     } catch (err) {
-      console.warn(`[TwitterTracker] Could not upload video natively for ${tweet.tweetId} (${err.message}) — falling back to link.`);
+      console.warn(`[TwitterTracker] Could not download media for ${tweet.tweetId} (${err.message}) — falling back to link.`);
+      await channel.send({ content: tweet.videoUrl });
+      return;
+    }
+
+    // Try to convert genuine (silent) GIFs into a real animated .gif so they
+    // auto-loop with no player controls, like an actual GIF in Discord.
+    // Real videos (with audio) are left as-is and uploaded as mp4.
+    let gifBuffer = null;
+    if (await checkFfmpegAvailable()) {
+      try {
+        ensureTmpDir();
+        const probePath = path.join(TMP_DIR, `${tweet.tweetId}_probe.mp4`);
+        fs.writeFileSync(probePath, mp4Buffer);
+        const isSilent = !(await hasAudioTrack(probePath));
+        try { fs.unlinkSync(probePath); } catch { /* ignore */ }
+
+        if (isSilent) {
+          gifBuffer = await convertToGif(mp4Buffer, tweet.tweetId);
+        }
+      } catch (err) {
+        console.warn(`[TwitterTracker] GIF detection/conversion error for ${tweet.tweetId}: ${err.message}`);
+      }
+    }
+
+    try {
+      if (gifBuffer && gifBuffer.length <= MAX_ATTACHMENT_BYTES) {
+        await channel.send({ files: [new AttachmentBuilder(gifBuffer, { name: `${tweet.tweetId}.gif` })] });
+        return;
+      }
+      if (gifBuffer) {
+        console.warn(`[TwitterTracker] Converted GIF for ${tweet.tweetId} too large (${gifBuffer.length} bytes) — falling back to mp4.`);
+      }
+
+      if (mp4Buffer.length <= MAX_ATTACHMENT_BYTES) {
+        await channel.send({ files: [new AttachmentBuilder(mp4Buffer, { name: `${tweet.tweetId}.mp4` })] });
+        return;
+      }
+
+      throw new Error('TOO_LARGE');
+    } catch (err) {
+      console.warn(`[TwitterTracker] Could not upload media natively for ${tweet.tweetId} (${err.message}) — falling back to link.`);
       await channel.send({ content: tweet.videoUrl });
     }
   }
 }
 
-// ── Poll one account ──────────────────────────────────────────────────────────
+// ── GIF detection + conversion ────────────────────────────────────────────────
+// X no longer hosts true .gif files — everything (real videos AND GIFs) gets
+// served as mp4. But X-originated GIFs are always silent (no audio track),
+// while real videos usually have one. We use that as the signal: only silent
+// clips get converted to an actual animated .gif (so they auto-loop with no
+// player controls, like a real GIF); videos with audio stay as mp4 uploads
+// since converting those would destructively strip their sound.
+const TMP_DIR = path.join(__dirname, '../tmp');
+
+function ensureTmpDir() {
+  if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+}
+
+function runFfmpegTool(bin, args, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 * 20 }, (err, stdout) => {
+      if (err) return reject(err);
+      resolve(stdout);
+    });
+  });
+}
+
+let ffmpegAvailable = null; // cached after first check
+
+async function checkFfmpegAvailable() {
+  if (ffmpegAvailable !== null) return ffmpegAvailable;
+  try {
+    await runFfmpegTool('ffmpeg', ['-version'], 5000);
+    await runFfmpegTool('ffprobe', ['-version'], 5000);
+    ffmpegAvailable = true;
+    console.log('[TwitterTracker] ffmpeg/ffprobe available — GIF conversion enabled.');
+  } catch {
+    ffmpegAvailable = false;
+    console.warn('[TwitterTracker] ffmpeg/ffprobe not available on this host — GIFs will upload as mp4 instead of true GIFs.');
+  }
+  return ffmpegAvailable;
+}
+
+async function hasAudioTrack(filePath) {
+  const out = await runFfmpegTool('ffprobe', [
+    '-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', filePath,
+  ], 10000);
+  return out.split('\n').map(s => s.trim()).includes('audio');
+}
+
+// Converts a silent mp4 buffer into an animated GIF buffer via ffmpeg's
+// two-pass palette method (much better quality/size than naive single-pass).
+// Returns null on any failure so the caller can fall back to mp4 upload.
+async function convertToGif(mp4Buffer, id) {
+  ensureTmpDir();
+  const inputPath   = path.join(TMP_DIR, `${id}_in.mp4`);
+  const palettePath = path.join(TMP_DIR, `${id}_palette.png`);
+  const outputPath  = path.join(TMP_DIR, `${id}_out.gif`);
+
+  try {
+    fs.writeFileSync(inputPath, mp4Buffer);
+
+    await runFfmpegTool('ffmpeg', [
+      '-i', inputPath,
+      '-vf', 'fps=15,scale=480:-1:flags=lanczos,palettegen',
+      '-y', palettePath,
+    ]);
+
+    await runFfmpegTool('ffmpeg', [
+      '-i', inputPath,
+      '-i', palettePath,
+      '-filter_complex', 'fps=15,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse',
+      '-y', outputPath,
+    ]);
+
+    return fs.readFileSync(outputPath);
+  } catch (err) {
+    console.warn(`[TwitterTracker] GIF conversion failed for ${id}: ${err.message}`);
+    return null;
+  } finally {
+    for (const p of [inputPath, palettePath, outputPath]) {
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
+    }
+  }
+}
+
+
 // Returns the delay (ms) to wait before polling this account again.
 async function pollAccount(account, channel, state) {
   const username = account.username;
