@@ -1,8 +1,8 @@
 'use strict';
 
-const https   = require('https');
 const fs      = require('fs');
 const path    = require('path');
+const { Scraper } = require('@the-convocation/twitter-scraper');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -22,44 +22,102 @@ const ACCOUNTS = [
 ];
 
 // Base interval per account. Each account is polled on its OWN independent
-// schedule, offset from the others, so one account getting rate-limited
-// does not block/delay the other.
-const BASE_INTERVAL_MS   = 60 * 60 * 1000;   // ~60 min base per account
-const JITTER_MS          = 15 * 60 * 1000;   // ± up to 15 min random jitter
-const MAX_BACKOFF_MS     = 6 * 60 * 60 * 1000; // cap backoff at 6h
-const MIN_BACKOFF_MS     = 20 * 60 * 1000;   // first backoff step 20 min
-const MAX_NEW_PER_POLL   = 5;
+// schedule, offset from the others, so one account having an issue does not
+// block/delay the other.
+const BASE_INTERVAL_MS = 20 * 60 * 1000; // 20 min base — authenticated calls have
+                                          // much higher limits than the old
+                                          // anonymous syndication endpoint.
+const JITTER_MS        = 5 * 60 * 1000;  // ± up to 5 min random jitter
+const MAX_BACKOFF_MS   = 3 * 60 * 60 * 1000; // cap backoff at 3h
+const MIN_BACKOFF_MS   = 10 * 60 * 1000; // first backoff step 10 min
+const MAX_NEW_PER_POLL = 5;
 
 const STATE_FILE = path.join(__dirname, '../data/twitter_tracker.json');
 
-// Rotate between a few realistic desktop user-agents to look less bot-like.
-const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-];
+// ── Cookie-based auth ──────────────────────────────────────────────────────────
+// Upload your X/Twitter cookies via Pebble File Manager as:
+//     data/twitter_cookies.txt
+// This matches the same pattern already used for data/instagram_cookies.txt.
+//
+// Easiest way to get this file: install a browser extension like
+// "Get cookies.txt LOCALLY", log into x.com, and export cookies for that
+// site — it saves in the standard Netscape cookies.txt format, which is
+// exactly what this reads. Just upload that exported file to data/twitter_cookies.txt
+// via Pebble's File Manager.
+//
+// ⚠️ SECURITY: this file is equivalent to being logged into that X account.
+// It's already excluded via .gitignore (like instagram_cookies.txt) so it
+// won't get pushed to GitHub — but treat it like a password regardless.
+// Ideally use a secondary/throwaway X account rather than a personal main
+// account, since automated use of any account carries some risk of that
+// account being flagged by X.
+const TWITTER_COOKIES_FILE = path.join(__dirname, '../data/twitter_cookies.txt');
 
-function randomUA() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+// Parses the standard Netscape cookies.txt format (what browser export
+// extensions produce) into "name=value" strings tough-cookie can parse.
+function parseNetscapeCookiesFile(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const lines = raw.split('\n');
+  const cookieStrings = [];
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line) continue;
+
+    // Lines can be prefixed with "#HttpOnly_" and are still valid data lines.
+    if (line.startsWith('#HttpOnly_')) {
+      line = line.slice('#HttpOnly_'.length);
+    } else if (line.startsWith('#')) {
+      continue; // regular comment line
+    }
+
+    const cols = line.split('\t');
+    if (cols.length < 7) continue;
+
+    const [, , , , , name, value] = cols;
+    if (!name) continue;
+
+    cookieStrings.push(`${name}=${value}`);
+  }
+
+  return cookieStrings;
 }
 
-// Fetch methods tried in order. If the direct request gets blocked/rate-limited,
-// we retry the SAME request routed through a public proxy, so it hits Twitter
-// from a different IP instead of Bubblehost's (likely already-flagged) IP.
-// NOTE: corsproxy.io, codetabs, and cors.x2u.in were all removed after real
-// production logs showed they NEVER succeeded (x2u = 404 every time,
-// codetabs = timeout every time, corsproxy.io = blocks non-dev origins).
-// allorigins is the only proxy that has actually worked, so it gets retries
-// instead of just one shot before giving up.
-const FETCH_METHODS = [
-  { name: 'direct',     build: (url) => url, attempts: 1 },
-  { name: 'allorigins', build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, attempts: 3 },
-];
+const scraper = new Scraper();
+let scraperReady = false;
+
+async function initScraper() {
+  if (!fs.existsSync(TWITTER_COOKIES_FILE)) {
+    console.error('🐦 [TwitterTracker] Missing data/twitter_cookies.txt — upload your X/Twitter cookies via Pebble File Manager. See comments in utils/twitterTracker.js for instructions.');
+    return false;
+  }
+
+  try {
+    const cookieStrings = parseNetscapeCookiesFile(TWITTER_COOKIES_FILE);
+
+    if (!cookieStrings.length) {
+      console.error('🐦 [TwitterTracker] data/twitter_cookies.txt exists but no valid cookies could be parsed from it. Make sure it was exported in Netscape cookies.txt format.');
+      return false;
+    }
+
+    await scraper.setCookies(cookieStrings);
+    const loggedIn = await scraper.isLoggedIn();
+
+    if (!loggedIn) {
+      console.error('🐦 [TwitterTracker] Logged in check FAILED — cookies may be expired or invalid. Re-export fresh cookies from your browser and re-upload data/twitter_cookies.txt.');
+      return false;
+    }
+
+    console.log('🐦 [TwitterTracker] ✅ Authenticated successfully via cookies.');
+    return true;
+  } catch (err) {
+    console.error('🐦 [TwitterTracker] Error setting up cookie auth:', err.message);
+    return false;
+  }
+}
 
 // ── Persistence ───────────────────────────────────────────────────────────────
-// State is keyed by username:
-// { "Michael8uo2": { lastTweetId, backoffMs, failCount } }
+// State is keyed by username: { "Michael8uo2": { lastTweetId, backoffMs, failCount } }
 function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
@@ -81,121 +139,50 @@ function saveState(state) {
 
 function getAccountState(state, username) {
   const existing = state[username];
-
-  // Migrate old format where state[username] was just a plain tweetId string
+  // Migrate any older state formats automatically
   if (typeof existing === 'string') {
     state[username] = { lastTweetId: existing, backoffMs: 0, failCount: 0 };
   } else if (!existing || typeof existing !== 'object') {
     state[username] = { lastTweetId: null, backoffMs: 0, failCount: 0 };
   }
-
   return state[username];
 }
 
-// ── HTTP GET → text (follows redirects) ──────────────────────────────────────
-function fetchHtml(url, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      timeout: timeoutMs,
-      headers: {
-        'User-Agent':      randomUA(),
-        'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control':   'no-cache',
-        'Referer':         'https://twitter.com/',
-      },
-    }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // Location can be relative (e.g. "/path") — resolve it against the
-        // original request URL, otherwise `new URL()`/https.get() throws
-        // "Invalid URL" on relative redirects (seen from some proxies).
-        let redirectUrl;
-        try {
-          redirectUrl = new URL(res.headers.location, url).toString();
-        } catch {
-          const err = new Error(`Invalid redirect location: ${res.headers.location}`);
-          return reject(err);
-        }
-        return fetchHtml(redirectUrl, timeoutMs).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        const err = new Error(`HTTP ${res.statusCode}`);
-        err.statusCode = res.statusCode;
-        return reject(err);
-      }
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', c => (data += c));
-      res.on('end', () => resolve(data));
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-  });
-}
-
-// ── Fetch timeline for one account (tries direct, then proxy fallbacks) ──────
+// ── Fetch timeline for one account (authenticated, no proxies needed) ────────
 async function fetchTimeline(username) {
-  // Cache-bust: syndication.twitter.com is fronted by a CDN that can serve a
-  // stale snapshot for several minutes. Appending a changing query param
-  // forces a fresh fetch instead of a cached one.
-  const targetUrl = `https://syndication.twitter.com/srv/timeline-profile/screen-name/${username}?dnt=1&_=${Date.now()}`;
-  let lastErr;
-
-  for (const method of FETCH_METHODS) {
-    const attempts = method.attempts || 1;
-
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        const html = await fetchHtml(method.build(targetUrl));
-
-        const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]*)<\/script>/);
-        if (!match?.[1]) throw new Error('Could not find __NEXT_DATA__ in response');
-
-        const data    = JSON.parse(match[1]);
-        const entries = data?.props?.pageProps?.timeline?.entries;
-        if (!Array.isArray(entries)) throw new Error('No timeline entries found in response');
-
-        const tweets = [];
-        for (const entry of entries) {
-          const t = entry?.content?.tweet;
-          if (!t) continue;
-
-          const tweetId = t.id_str || String(t.id);
-          if (!tweetId) continue;
-
-          // Skip retweets and replies
-          if (t.retweeted_status) continue;
-          if (t.in_reply_to_status_id_str) continue;
-          if ((t.full_text || t.text || '').startsWith('RT @')) continue;
-
-          const text     = (t.full_text || t.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
-          const tweetUrl = `https://x.com/${username}/status/${tweetId}`;
-          const pubDate  = t.created_at;
-
-          const images = [];
-          const media  = t.entities?.media || t.extended_entities?.media || [];
-          for (const m of media) {
-            if (m.media_url_https) images.push(m.media_url_https);
-          }
-
-          tweets.push({ tweetId, tweetUrl, text, images, pubDate });
-        }
-
-        if (method.name !== 'direct') {
-          console.log(`[TwitterTracker] @${username} fetched via fallback proxy: ${method.name}${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
-        }
-        return tweets;
-      } catch (err) {
-        lastErr = err;
-        console.warn(`[TwitterTracker]   ↳ ${method.name} attempt ${attempt}/${attempts} failed for @${username}: ${err.statusCode ? 'HTTP ' + err.statusCode : err.message}`);
-        if (attempt < attempts) {
-          await new Promise(r => setTimeout(r, 2000)); // short pause before retrying same method
-        }
-      }
-    }
+  const raw = [];
+  // getTweets is an AsyncGenerator, most-recent-first. Pull a small batch —
+  // enough to skip past a pinned tweet/retweets/replies and still find
+  // genuinely new original tweets.
+  for await (const tweet of scraper.getTweets(username, 15)) {
+    raw.push(tweet);
+    if (raw.length >= 15) break;
   }
 
-  throw lastErr;
+  const tweets = [];
+  for (const t of raw) {
+    if (!t.id) continue;
+    if (t.isPin) continue;      // pinned tweet isn't necessarily the latest
+    if (t.isRetweet) continue;
+    if (t.isReply) continue;
+
+    const images = (t.photos || []).map(p => p.url).filter(Boolean);
+
+    tweets.push({
+      tweetId: t.id,
+      tweetUrl: t.permanentUrl || `https://x.com/${username}/status/${t.id}`,
+      text: (t.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim(),
+      images,
+      pubDate: t.timeParsed || (t.timestamp ? new Date(t.timestamp * 1000) : null),
+    });
+  }
+
+  // Sort newest-first by tweet ID (Twitter IDs are roughly chronological and
+  // this avoids ever trusting positional order, which is what broke things
+  // with the old syndication endpoint's pinned-tweet-first behavior).
+  tweets.sort((a, b) => (BigInt(b.tweetId) > BigInt(a.tweetId) ? 1 : -1));
+
+  return tweets;
 }
 
 // ── Discord embed ─────────────────────────────────────────────────────────────
@@ -208,7 +195,7 @@ function buildEmbed(tweet, account) {
       iconURL: avatarUrl,
       url:     tweet.tweetUrl,
     })
-    .setTimestamp(tweet.pubDate ? new Date(tweet.pubDate) : new Date())
+    .setTimestamp(tweet.pubDate || new Date())
     .setFooter({ text: `@${account.username}  •  X (Twitter)` });
 
   if (tweet.text)           embed.setDescription(tweet.text.slice(0, 4096));
@@ -246,28 +233,21 @@ async function pollAccount(account, channel, state) {
     items = await fetchTimeline(username);
   } catch (err) {
     acctState.failCount = (acctState.failCount || 0) + 1;
-
-    if (err.statusCode === 429 || err.statusCode === 403) {
-      acctState.backoffMs = Math.min(
-        (acctState.backoffMs || MIN_BACKOFF_MS) * 2,
-        MAX_BACKOFF_MS,
-      );
-      console.warn(`[TwitterTracker] @${username} blocked/rate-limited on all methods (fail #${acctState.failCount}) — next retry in ~${Math.round((BASE_INTERVAL_MS + acctState.backoffMs) / 60000)} min`);
-    } else {
-      console.error(`[TwitterTracker] @${username} fetch error:`, err.message);
-      // Non-429 errors get a smaller fixed backoff bump, not full exponential
-      acctState.backoffMs = Math.min((acctState.backoffMs || 0) + 5 * 60 * 1000, MAX_BACKOFF_MS);
-    }
-
+    acctState.backoffMs = Math.min(
+      (acctState.backoffMs || MIN_BACKOFF_MS) * 2,
+      MAX_BACKOFF_MS,
+    );
+    console.error(`[TwitterTracker] @${username} fetch error (fail #${acctState.failCount}): ${err.message} — next retry in ~${Math.round((BASE_INTERVAL_MS + acctState.backoffMs) / 60000)} min`);
     saveState(state);
     return BASE_INTERVAL_MS + acctState.backoffMs + Math.floor(Math.random() * JITTER_MS);
   }
 
   // Success — reset backoff/failcount
-  acctState.backoffMs  = 0;
-  acctState.failCount  = 0;
+  acctState.backoffMs = 0;
+  acctState.failCount = 0;
 
   if (!items.length) {
+    console.log(`[TwitterTracker] @${username} checked — no original tweets found (all pinned/retweets/replies, or empty timeline)`);
     saveState(state);
     return BASE_INTERVAL_MS + Math.floor(Math.random() * JITTER_MS);
   }
@@ -310,38 +290,11 @@ async function pollAccount(account, channel, state) {
   return BASE_INTERVAL_MS + Math.floor(Math.random() * JITTER_MS);
 }
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-// Each account runs on its own independent loop/timer, staggered on startup,
-// so a 429 on one account only affects that account's own schedule.
-let _started = false;
-
-function scheduleAccountLoop(account, client, state, initialDelayMs) {
-  const loop = async () => {
-    const channel = client.channels.cache.get(CHANNEL_ID);
-    let nextDelay = BASE_INTERVAL_MS + Math.floor(Math.random() * JITTER_MS);
-
-    if (!channel) {
-      console.error(`[TwitterTracker] Channel ${CHANNEL_ID} not found — retrying in 10 min`);
-      nextDelay = 10 * 60 * 1000;
-    } else {
-      try {
-        nextDelay = await pollAccount(account, channel, state);
-      } catch (err) {
-        console.error(`[TwitterTracker] Unexpected error for @${account.username}:`, err.message);
-      }
-    }
-
-    setTimeout(loop, nextDelay);
-  };
-
-  setTimeout(loop, initialDelayMs);
-}
-
 // ══════════════════════════════════════════════════════════════════════════
 // 🧪 TESTING THINGY — remove this whole block (and its call in startTracker)
 // when the user says "remove the testing thingy". Force-posts each account's
-// current latest tweet once on startup, regardless of bookmark state, so we
-// can verify the fetch pipeline actually works end-to-end.
+// current latest original tweet once on startup, regardless of bookmark
+// state, so we can verify the fetch pipeline actually works end-to-end.
 // ══════════════════════════════════════════════════════════════════════════
 const TESTING_THINGY_ENABLED = true;
 
@@ -364,35 +317,70 @@ async function runTestingThingy(client) {
       await channel.send({ embeds: [buildEmbed(latest, account)], components: [buildRow(latest)] });
       console.log(`🧪 [TestingThingy] ✅ Posted @${account.username}'s latest tweet (${latest.tweetId}) as a test.`);
     } catch (err) {
-      console.error(`🧪 [TestingThingy] ❌ Failed to fetch/post for @${account.username}: ${err.statusCode ? 'HTTP ' + err.statusCode : err.message}`);
+      console.error(`🧪 [TestingThingy] ❌ Failed to fetch/post for @${account.username}: ${err.message}`);
     }
-    await new Promise(r => setTimeout(r, 2000)); // small gap between the two test posts
+    await new Promise(r => setTimeout(r, 2000));
   }
 
   console.log('🧪 [TestingThingy] Done. This does NOT affect normal tracking state/bookmarks.');
 }
 // ══════════════════════════════════════════════════════════════════════════
-// END TESTING THINGY (block continues below with normal startTracker logic)
+// END TESTING THINGY
 // ══════════════════════════════════════════════════════════════════════════
 
-function startTracker(client) {
+// ── Start ─────────────────────────────────────────────────────────────────────
+let _started = false;
+
+function scheduleAccountLoop(account, client, state, initialDelayMs) {
+  const loop = async () => {
+    const channel = client.channels.cache.get(CHANNEL_ID);
+    let nextDelay = BASE_INTERVAL_MS + Math.floor(Math.random() * JITTER_MS);
+
+    if (!channel) {
+      console.error(`[TwitterTracker] Channel ${CHANNEL_ID} not found — retrying in 10 min`);
+      nextDelay = 10 * 60 * 1000;
+    } else if (!scraperReady) {
+      console.error(`[TwitterTracker] Not authenticated — skipping @${account.username} poll, retrying in 10 min`);
+      nextDelay = 10 * 60 * 1000;
+    } else {
+      try {
+        nextDelay = await pollAccount(account, channel, state);
+      } catch (err) {
+        console.error(`[TwitterTracker] Unexpected error for @${account.username}:`, err.message);
+      }
+    }
+
+    setTimeout(loop, nextDelay);
+  };
+
+  setTimeout(loop, initialDelayMs);
+}
+
+async function startTracker(client) {
   if (_started) return;
   _started = true;
 
   const names = ACCOUNTS.map(a => `@${a.username}`).join(', ');
-  console.log(`🐦 [TwitterTracker] Tracking ${names} → channel #${CHANNEL_ID} (independent ~${BASE_INTERVAL_MS / 60000} min schedules per account)`);
+  console.log(`🐦 [TwitterTracker] Starting up — will track ${names} → channel #${CHANNEL_ID}`);
+
+  scraperReady = await initScraper();
 
   const state = loadState();
 
   // 🧪 TESTING THINGY — remove this if-block when told to
-  if (TESTING_THINGY_ENABLED) {
-    setTimeout(() => runTestingThingy(client), 15_000); // wait 15s for client to be fully ready
+  if (TESTING_THINGY_ENABLED && scraperReady) {
+    setTimeout(() => runTestingThingy(client), 5_000);
   }
 
-  // Stagger each account's first poll so they never hit the API at the exact
-  // same moment (spread evenly across the first 10 minutes, plus 60s base delay).
+  if (!scraperReady) {
+    console.error('🐦 [TwitterTracker] Skipping normal poll scheduling until authentication succeeds. Set TWITTER_COOKIES and restart the bot.');
+    return;
+  }
+
+  console.log(`🐦 [TwitterTracker] Tracking ${names} (independent ~${BASE_INTERVAL_MS / 60000} min schedules per account)`);
+
   ACCOUNTS.forEach((account, i) => {
-    const stagger = 60_000 + (i * (10 * 60 * 1000) / Math.max(ACCOUNTS.length, 1));
+    const stagger = 20_000 + (i * (5 * 60 * 1000) / Math.max(ACCOUNTS.length, 1));
     scheduleAccountLoop(account, client, state, stagger);
   });
 }
