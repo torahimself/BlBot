@@ -1,5 +1,6 @@
 node_modules/
 .env
 data/instagram_cookies.txt
+data/twitter_cookies.txt
 data/*.db
 *.log
