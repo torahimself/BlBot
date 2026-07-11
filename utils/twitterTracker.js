@@ -106,7 +106,17 @@ function fetchHtml(url, timeoutMs = 15000) {
       },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchHtml(res.headers.location, timeoutMs).then(resolve).catch(reject);
+        // Location can be relative (e.g. "/path") — resolve it against the
+        // original request URL, otherwise `new URL()`/https.get() throws
+        // "Invalid URL" on relative redirects (seen from some proxies).
+        let redirectUrl;
+        try {
+          redirectUrl = new URL(res.headers.location, url).toString();
+        } catch {
+          const err = new Error(`Invalid redirect location: ${res.headers.location}`);
+          return reject(err);
+        }
+        return fetchHtml(redirectUrl, timeoutMs).then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) {
         const err = new Error(`HTTP ${res.statusCode}`);
