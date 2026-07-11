@@ -167,12 +167,14 @@ async function fetchTimeline(username) {
     if (t.isReply) continue;
 
     const images = (t.photos || []).map(p => p.url).filter(Boolean);
+    const videoUrl = (t.videos && t.videos.length) ? t.videos[0].url : null;
 
     tweets.push({
       tweetId: t.id,
       tweetUrl: t.permanentUrl || `https://x.com/${username}/status/${t.id}`,
       text: (t.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim(),
       images,
+      videoUrl,
       pubDate: t.timeParsed || (t.timestamp ? new Date(t.timestamp * 1000) : null),
     });
   }
@@ -218,6 +220,17 @@ function buildRow(tweet) {
       .setStyle(ButtonStyle.Link)
       .setEmoji({ name: '▶️' }),
   );
+}
+
+// Posts one tweet to the channel. If it has a video/GIF, the direct video
+// URL is sent as a plain follow-up message so Discord natively renders a
+// playable video (Discord embeds can't play video via setImage — that only
+// works for static images/GIF-as-image).
+async function postTweet(channel, tweet, account) {
+  await channel.send({ embeds: [buildEmbed(tweet, account)], components: [buildRow(tweet)] });
+  if (tweet.videoUrl) {
+    await channel.send({ content: tweet.videoUrl });
+  }
 }
 
 // ── Poll one account ──────────────────────────────────────────────────────────
@@ -275,7 +288,7 @@ async function pollAccount(account, channel, state) {
     const toPost = newTweets.reverse().slice(-MAX_NEW_PER_POLL);
     for (const tweet of toPost) {
       try {
-        await channel.send({ embeds: [buildEmbed(tweet, account)], components: [buildRow(tweet)] });
+        await postTweet(channel, tweet, account);
         console.log(`[TwitterTracker] ✅ Posted @${username} tweet ${tweet.tweetId}`);
         await new Promise(r => setTimeout(r, 1200));
       } catch (err) {
@@ -298,7 +311,7 @@ async function pollAccount(account, channel, state) {
 // ══════════════════════════════════════════════════════════════════════════
 const TESTING_THINGY_ENABLED = true;
 
-async function runTestingThingy(client) {
+async function runTestingThingy(client, state) {
   console.log('🧪 [TestingThingy] Running one-time test post for each tracked account...');
   const channel = client.channels.cache.get(CHANNEL_ID);
   if (!channel) {
@@ -314,15 +327,22 @@ async function runTestingThingy(client) {
         continue;
       }
       const latest = items[0];
-      await channel.send({ embeds: [buildEmbed(latest, account)], components: [buildRow(latest)] });
+      await postTweet(channel, latest, account);
       console.log(`🧪 [TestingThingy] ✅ Posted @${account.username}'s latest tweet (${latest.tweetId}) as a test.`);
+
+      // Sync the bookmark to this tweet so the normal tracker doesn't see a
+      // huge gap (from an old/stale bookmark) on its next poll and dump a
+      // flood of "new" tweets — including a duplicate of this exact one.
+      const acctState = getAccountState(state, account.username);
+      acctState.lastTweetId = latest.tweetId;
+      saveState(state);
     } catch (err) {
       console.error(`🧪 [TestingThingy] ❌ Failed to fetch/post for @${account.username}: ${err.message}`);
     }
     await new Promise(r => setTimeout(r, 2000));
   }
 
-  console.log('🧪 [TestingThingy] Done. This does NOT affect normal tracking state/bookmarks.');
+  console.log('🧪 [TestingThingy] Done. This does NOT affect normal tracking beyond bookmarking what it just posted.');
 }
 // ══════════════════════════════════════════════════════════════════════════
 // END TESTING THINGY
@@ -369,7 +389,7 @@ async function startTracker(client) {
 
   // 🧪 TESTING THINGY — remove this if-block when told to
   if (TESTING_THINGY_ENABLED && scraperReady) {
-    setTimeout(() => runTestingThingy(client), 5_000);
+    setTimeout(() => runTestingThingy(client, state), 5_000);
   }
 
   if (!scraperReady) {
