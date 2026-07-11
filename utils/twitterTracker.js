@@ -229,7 +229,10 @@ function buildRow(tweet) {
 async function postTweet(channel, tweet, account) {
   await channel.send({ embeds: [buildEmbed(tweet, account)], components: [buildRow(tweet)] });
   if (tweet.videoUrl) {
-    await channel.send({ content: tweet.videoUrl });
+    // Spoiler-wrapping hides the raw URL text but Discord still auto-generates
+    // the playable video embed underneath — Discord has no embed field that
+    // can natively play video, so this is the closest real equivalent.
+    await channel.send({ content: `||${tweet.videoUrl}||` });
   }
 }
 
@@ -312,34 +315,45 @@ async function pollAccount(account, channel, state) {
 const TESTING_THINGY_ENABLED = true;
 
 async function runTestingThingy(client, state) {
-  console.log('🧪 [TestingThingy] Running one-time test post for each tracked account...');
+  console.log('🧪 [TestingThingy] Running one-time test post (last 4 tweets, @Michael8uo2 only)...');
   const channel = client.channels.cache.get(CHANNEL_ID);
   if (!channel) {
     console.error(`🧪 [TestingThingy] Channel ${CHANNEL_ID} not found — aborting test.`);
     return;
   }
 
-  for (const account of ACCOUNTS) {
-    try {
-      const items = await fetchTimeline(account.username);
-      if (!items.length) {
-        console.warn(`🧪 [TestingThingy] @${account.username} — no tweets found to test with.`);
-        continue;
-      }
-      const latest = items[0];
-      await postTweet(channel, latest, account);
-      console.log(`🧪 [TestingThingy] ✅ Posted @${account.username}'s latest tweet (${latest.tweetId}) as a test.`);
+  const account = ACCOUNTS.find(a => a.username === 'Michael8uo2');
+  if (!account) {
+    console.error('🧪 [TestingThingy] Michael8uo2 not found in ACCOUNTS list — aborting test.');
+    return;
+  }
 
-      // Sync the bookmark to this tweet so the normal tracker doesn't see a
-      // huge gap (from an old/stale bookmark) on its next poll and dump a
-      // flood of "new" tweets — including a duplicate of this exact one.
-      const acctState = getAccountState(state, account.username);
-      acctState.lastTweetId = latest.tweetId;
-      saveState(state);
-    } catch (err) {
-      console.error(`🧪 [TestingThingy] ❌ Failed to fetch/post for @${account.username}: ${err.message}`);
+  try {
+    const items = await fetchTimeline(account.username);
+    if (!items.length) {
+      console.warn(`🧪 [TestingThingy] @${account.username} — no tweets found to test with.`);
+      return;
     }
-    await new Promise(r => setTimeout(r, 2000));
+
+    // items are newest-first; take the 4 most recent, post oldest-to-newest
+    const toPost = items.slice(0, 4).reverse();
+    for (const tweet of toPost) {
+      try {
+        await postTweet(channel, tweet, account);
+        console.log(`🧪 [TestingThingy] ✅ Posted @${account.username}'s tweet (${tweet.tweetId}) as a test.`);
+      } catch (err) {
+        console.error(`🧪 [TestingThingy] ❌ Failed to post tweet ${tweet.tweetId}: ${err.message}`);
+      }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    // Sync the bookmark to the newest of these so the normal tracker doesn't
+    // see a gap on its next poll and dump a flood/duplicate of these same tweets.
+    const acctState = getAccountState(state, account.username);
+    acctState.lastTweetId = items[0].tweetId;
+    saveState(state);
+  } catch (err) {
+    console.error(`🧪 [TestingThingy] ❌ Failed to fetch for @${account.username}: ${err.message}`);
   }
 
   console.log('🧪 [TestingThingy] Done. This does NOT affect normal tracking beyond bookmarking what it just posted.');
