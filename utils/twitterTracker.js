@@ -47,14 +47,14 @@ function randomUA() {
 // Fetch methods tried in order. If the direct request gets blocked/rate-limited,
 // we retry the SAME request routed through a public proxy, so it hits Twitter
 // from a different IP instead of Bubblehost's (likely already-flagged) IP.
-// NOTE: corsproxy.io was removed — its free tier now only accepts requests
-// from dev origins (localhost/github.io/ngrok/trycloudflare), so it silently
-// rejects requests coming from a real server like Bubblehost.
+// NOTE: corsproxy.io, codetabs, and cors.x2u.in were all removed after real
+// production logs showed they NEVER succeeded (x2u = 404 every time,
+// codetabs = timeout every time, corsproxy.io = blocks non-dev origins).
+// allorigins is the only proxy that has actually worked, so it gets retries
+// instead of just one shot before giving up.
 const FETCH_METHODS = [
-  { name: 'direct',    build: (url) => url },
-  { name: 'allorigins', build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` },
-  { name: 'codetabs',  build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}` },
-  { name: 'x2u',       build: (url) => `https://cors.x2u.in/${url}` },
+  { name: 'direct',     build: (url) => url, attempts: 1 },
+  { name: 'allorigins', build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, attempts: 3 },
 ];
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -142,52 +142,56 @@ async function fetchTimeline(username) {
   let lastErr;
 
   for (const method of FETCH_METHODS) {
-    try {
-      const html = await fetchHtml(method.build(targetUrl));
+    const attempts = method.attempts || 1;
 
-      const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]*)<\/script>/);
-      if (!match?.[1]) throw new Error('Could not find __NEXT_DATA__ in response');
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const html = await fetchHtml(method.build(targetUrl));
 
-      const data    = JSON.parse(match[1]);
-      const entries = data?.props?.pageProps?.timeline?.entries;
-      if (!Array.isArray(entries)) throw new Error('No timeline entries found in response');
+        const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([^<]*)<\/script>/);
+        if (!match?.[1]) throw new Error('Could not find __NEXT_DATA__ in response');
 
-      const tweets = [];
-      for (const entry of entries) {
-        const t = entry?.content?.tweet;
-        if (!t) continue;
+        const data    = JSON.parse(match[1]);
+        const entries = data?.props?.pageProps?.timeline?.entries;
+        if (!Array.isArray(entries)) throw new Error('No timeline entries found in response');
 
-        const tweetId = t.id_str || String(t.id);
-        if (!tweetId) continue;
+        const tweets = [];
+        for (const entry of entries) {
+          const t = entry?.content?.tweet;
+          if (!t) continue;
 
-        // Skip retweets and replies
-        if (t.retweeted_status) continue;
-        if (t.in_reply_to_status_id_str) continue;
-        if ((t.full_text || t.text || '').startsWith('RT @')) continue;
+          const tweetId = t.id_str || String(t.id);
+          if (!tweetId) continue;
 
-        const text     = (t.full_text || t.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
-        const tweetUrl = `https://x.com/${username}/status/${tweetId}`;
-        const pubDate  = t.created_at;
+          // Skip retweets and replies
+          if (t.retweeted_status) continue;
+          if (t.in_reply_to_status_id_str) continue;
+          if ((t.full_text || t.text || '').startsWith('RT @')) continue;
 
-        const images = [];
-        const media  = t.entities?.media || t.extended_entities?.media || [];
-        for (const m of media) {
-          if (m.media_url_https) images.push(m.media_url_https);
+          const text     = (t.full_text || t.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
+          const tweetUrl = `https://x.com/${username}/status/${tweetId}`;
+          const pubDate  = t.created_at;
+
+          const images = [];
+          const media  = t.entities?.media || t.extended_entities?.media || [];
+          for (const m of media) {
+            if (m.media_url_https) images.push(m.media_url_https);
+          }
+
+          tweets.push({ tweetId, tweetUrl, text, images, pubDate });
         }
 
-        tweets.push({ tweetId, tweetUrl, text, images, pubDate });
+        if (method.name !== 'direct') {
+          console.log(`[TwitterTracker] @${username} fetched via fallback proxy: ${method.name}${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
+        }
+        return tweets;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[TwitterTracker]   ↳ ${method.name} attempt ${attempt}/${attempts} failed for @${username}: ${err.statusCode ? 'HTTP ' + err.statusCode : err.message}`);
+        if (attempt < attempts) {
+          await new Promise(r => setTimeout(r, 2000)); // short pause before retrying same method
+        }
       }
-
-      if (method.name !== 'direct') {
-        console.log(`[TwitterTracker] @${username} fetched via fallback proxy: ${method.name}`);
-      }
-      return tweets;
-    } catch (err) {
-      lastErr = err;
-      console.warn(`[TwitterTracker]   ↳ ${method.name} failed for @${username}: ${err.statusCode ? 'HTTP ' + err.statusCode : err.message}`);
-      // Try the next method regardless of error type — a parsing failure via
-      // one proxy (e.g. it wraps content differently) doesn't mean the next
-      // proxy will fail the same way, so always exhaust the full chain.
     }
   }
 
@@ -333,6 +337,44 @@ function scheduleAccountLoop(account, client, state, initialDelayMs) {
   setTimeout(loop, initialDelayMs);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// 🧪 TESTING THINGY — remove this whole block (and its call in startTracker)
+// when the user says "remove the testing thingy". Force-posts each account's
+// current latest tweet once on startup, regardless of bookmark state, so we
+// can verify the fetch pipeline actually works end-to-end.
+// ══════════════════════════════════════════════════════════════════════════
+const TESTING_THINGY_ENABLED = true;
+
+async function runTestingThingy(client) {
+  console.log('🧪 [TestingThingy] Running one-time test post for each tracked account...');
+  const channel = client.channels.cache.get(CHANNEL_ID);
+  if (!channel) {
+    console.error(`🧪 [TestingThingy] Channel ${CHANNEL_ID} not found — aborting test.`);
+    return;
+  }
+
+  for (const account of ACCOUNTS) {
+    try {
+      const items = await fetchTimeline(account.username);
+      if (!items.length) {
+        console.warn(`🧪 [TestingThingy] @${account.username} — no tweets found to test with.`);
+        continue;
+      }
+      const latest = items[0];
+      await channel.send({ embeds: [buildEmbed(latest, account)], components: [buildRow(latest)] });
+      console.log(`🧪 [TestingThingy] ✅ Posted @${account.username}'s latest tweet (${latest.tweetId}) as a test.`);
+    } catch (err) {
+      console.error(`🧪 [TestingThingy] ❌ Failed to fetch/post for @${account.username}: ${err.statusCode ? 'HTTP ' + err.statusCode : err.message}`);
+    }
+    await new Promise(r => setTimeout(r, 2000)); // small gap between the two test posts
+  }
+
+  console.log('🧪 [TestingThingy] Done. This does NOT affect normal tracking state/bookmarks.');
+}
+// ══════════════════════════════════════════════════════════════════════════
+// END TESTING THINGY (block continues below with normal startTracker logic)
+// ══════════════════════════════════════════════════════════════════════════
+
 function startTracker(client) {
   if (_started) return;
   _started = true;
@@ -341,6 +383,11 @@ function startTracker(client) {
   console.log(`🐦 [TwitterTracker] Tracking ${names} → channel #${CHANNEL_ID} (independent ~${BASE_INTERVAL_MS / 60000} min schedules per account)`);
 
   const state = loadState();
+
+  // 🧪 TESTING THINGY — remove this if-block when told to
+  if (TESTING_THINGY_ENABLED) {
+    setTimeout(() => runTestingThingy(client), 15_000); // wait 15s for client to be fully ready
+  }
 
   // Stagger each account's first poll so they never hit the API at the exact
   // same moment (spread evenly across the first 10 minutes, plus 60s base delay).
