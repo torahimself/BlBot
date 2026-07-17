@@ -57,8 +57,8 @@ module.exports = {
       );
 
       client.scheduler = scheduler;
-      scheduler.scheduleReports(); // schedules both monthly jobs
-      console.log('📊 Attachment counter & statp systems activated (monthly, 1st of each month, 1 AM Riyadh)');
+      scheduler.scheduleReports(); // schedules the combined statm → statp monthly run
+      console.log('📊 Attachment counter & statp systems activated (statm → statp, sequential, 1st of each month, 1 AM Riyadh)');
     } catch (error) {
       console.error('❌ Error starting attachment counter system:', error);
     }
