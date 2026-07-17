@@ -46,14 +46,23 @@ class StatpScanner extends AttachmentCounter {
     return this.statpChannelsCache;
   }
 
-  // Full statp scan — current month, single tracked role
-  async scanStatp(config) {
+  // Full statp scan. `dateRange` (optional): { since: Date, until: Date|null }
+  // overrides the default "current month" behavior when provided.
+  async scanStatp(config, dateRange = null) {
     const trackedRoles = [config.statp.trackedRole];
-    const now = new Date();
-    const sinceDate = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    console.log(`🔄 [Statp] Starting monthly scan...`);
-    console.log(`📅 [Statp] From ${sinceDate.toLocaleDateString()} (${sinceDate.toISOString()}) to now`);
+    let sinceDate, untilDate = null;
+    if (dateRange) {
+      sinceDate = dateRange.since;
+      untilDate = dateRange.until || null;
+      console.log(`🔄 [Statp] Starting custom-range scan...`);
+      console.log(`📅 [Statp] From ${sinceDate.toISOString()}${untilDate ? ` to ${untilDate.toISOString()}` : ' to now'}`);
+    } else {
+      const now = new Date();
+      sinceDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      console.log(`🔄 [Statp] Starting monthly scan...`);
+      console.log(`📅 [Statp] From ${sinceDate.toLocaleDateString()} (${sinceDate.toISOString()}) to now`);
+    }
 
     const channelIds = this.getStatpChannels(config);
     const allUserStats = new Map();
@@ -72,7 +81,7 @@ class StatpScanner extends AttachmentCounter {
       const typeLabel = channel.type === 15 ? 'forum' : channel.type === 16 ? 'media' : 'text';
       console.log(`🔍 [Statp] Scanning ${typeLabel}: ${channel.name}`);
 
-      const channelStats = await this.scanChannel(channel, trackedRoles, sinceDate);
+      const channelStats = await this.scanChannel(channel, trackedRoles, sinceDate, untilDate);
 
       for (const [userId, userData] of channelStats) {
         if (!allUserStats.has(userId)) {
