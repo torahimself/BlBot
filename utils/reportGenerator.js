@@ -95,7 +95,7 @@ class ReportGenerator {
   }
 
   // Generate individual user embed
-  generateUserEmbed(userId, userData, client, reportType) {
+  generateUserEmbed(userId, userData, client, reportType, periodLabel = null) {
     // Set default if not provided
     if (reportType === undefined) reportType = 'weekly';
     
@@ -178,22 +178,27 @@ class ReportGenerator {
     }
 
     // Activity period
-    const now = new Date();
-    let startDate;
-    
-    if (isMonthly) {
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    let periodText;
+    if (periodLabel) {
+      periodText = periodLabel;
     } else {
-      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      let startDate;
+
+      if (isMonthly) {
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      } else {
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      }
+
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+
+      periodText = isMonthly
+        ? `${monthNames[startDate.getMonth()]} ${startDate.getFullYear()}`
+        : `<t:${Math.floor(startDate.getTime() / 1000)}:D> to <t:${Math.floor(now.getTime() / 1000)}:D>`;
     }
-    
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    
-    const periodText = isMonthly 
-      ? `${monthNames[startDate.getMonth()]} ${startDate.getFullYear()}`
-      : `<t:${Math.floor(startDate.getTime() / 1000)}:D> to <t:${Math.floor(now.getTime() / 1000)}:D>`;
     
     embed.addFields({
       name: '📅 REPORT PERIOD',
