@@ -64,8 +64,8 @@ class AttachmentCounter {
   }
 
   // Scan ALL messages in a channel from sinceDate
-  async scanAllChannelMessages(channel, trackedRoles, sinceDate) {
-    console.log(`🔍 Scanning ALL messages in ${channel.name} since ${sinceDate.toLocaleString()}`);
+  async scanAllChannelMessages(channel, trackedRoles, sinceDate, untilDate = null) {
+    console.log(`🔍 Scanning ALL messages in ${channel.name} since ${sinceDate.toLocaleString()}${untilDate ? ` until ${untilDate.toLocaleString()}` : ''}`);
     
     const userStats = new Map();
     let totalMessages = 0;
@@ -94,6 +94,14 @@ class AttachmentCounter {
           if (message.createdAt < sinceDate) {
             batchOlderThanRange = true;
             break;
+          }
+
+          // Skip messages newer than the upper bound (relevant for automatic
+          // reports scanning a specific past month), but keep paginating
+          // since Discord returns newest-first.
+          if (untilDate && message.createdAt >= untilDate) {
+            lastMessageId = messageId;
+            continue;
           }
 
           if (message.author.bot) continue;
@@ -155,7 +163,7 @@ class AttachmentCounter {
   }
 
   // Scan forum / media channels (type 15 or 16)
-  async scanForumChannel(forumChannel, trackedRoles, sinceDate) {
+  async scanForumChannel(forumChannel, trackedRoles, sinceDate, untilDate = null) {
     console.log(`🏛️  Scanning forum: ${forumChannel.name}`);
 
     const userStats = new Map();
@@ -206,8 +214,10 @@ class AttachmentCounter {
           const archiveTs = thread.archiveTimestamp ? new Date(thread.archiveTimestamp) : null;
           const createdAt  = thread.createdAt;
 
-          // Include if: created this month OR archived this month
-          if (createdAt >= sinceDate || (archiveTs && archiveTs >= sinceDate)) {
+          // Include if: created in range OR archived in range
+          const inSinceRange = createdAt >= sinceDate || (archiveTs && archiveTs >= sinceDate);
+          const inUntilRange = !untilDate || createdAt <= untilDate || (archiveTs && archiveTs <= untilDate);
+          if (inSinceRange && inUntilRange) {
             addThread(thread);
             archivedAdded++;
             allOlderThanMonth = false;
@@ -240,7 +250,7 @@ class AttachmentCounter {
       console.log(`📖 [${i + 1}/${relevantThreads.length}] Scanning thread: ${thread.name}`);
 
       try {
-        const threadStats = await this.scanAllChannelMessages(thread, trackedRoles, sinceDate);
+        const threadStats = await this.scanAllChannelMessages(thread, trackedRoles, sinceDate, untilDate);
 
         for (const [userId, userData] of threadStats) {
           if (!userStats.has(userId)) {
@@ -273,27 +283,33 @@ class AttachmentCounter {
   }
 
   // Scan channel (forum, media channel, or regular text)
-  async scanChannel(channel, trackedRoles, sinceDate) {
+  async scanChannel(channel, trackedRoles, sinceDate, untilDate = null) {
     if (channel.type === 15 || channel.type === 16) {
       // type 15 = GuildForum, type 16 = GuildMedia — both use threads
-      return await this.scanForumChannel(channel, trackedRoles, sinceDate);
+      return await this.scanForumChannel(channel, trackedRoles, sinceDate, untilDate);
     } else if (channel.isTextBased()) {
-      return await this.scanAllChannelMessages(channel, trackedRoles, sinceDate);
+      return await this.scanAllChannelMessages(channel, trackedRoles, sinceDate, untilDate);
     } else {
       return new Map();
     }
   }
 
-  // Main scanning method – receives the full config object
-  async scanChannels(config, reportType = 'weekly') {
+  // Main scanning method – receives the full config object.
+  // `dateRange` (optional): { since: Date, until: Date|null } overrides the
+  // default reportType-based date logic entirely, when provided.
+  async scanChannels(config, reportType = 'weekly', dateRange = null) {
     const trackedRoles = config.attachmentCounter.trackedRoles;
     console.log(`🔄 Starting ${reportType.toUpperCase()} attachment scan...`);
     
     const allChannels = this.getAllChannelsToScan(config);
     const allUserStats = new Map();
     
-    let sinceDate;
-    if (reportType === 'monthly') {
+    let sinceDate, untilDate = null;
+    if (dateRange) {
+      sinceDate = dateRange.since;
+      untilDate = dateRange.until || null;
+      console.log(`📅 Custom range scan: From ${sinceDate.toLocaleDateString()}${untilDate ? ` to ${untilDate.toLocaleDateString()}` : ' to now'}`);
+    } else if (reportType === 'monthly') {
       const now = new Date();
       sinceDate = new Date(now.getFullYear(), now.getMonth(), 1);
       console.log(`📅 Monthly scan: From ${sinceDate.toLocaleDateString()} to now`);
@@ -315,7 +331,7 @@ class AttachmentCounter {
       }
 
       console.log(`🔍 Scanning channel ${totalChannelsScanned}/${allChannels.length}: ${channel.name}`);
-      const channelStats = await this.scanChannel(channel, trackedRoles, sinceDate);
+      const channelStats = await this.scanChannel(channel, trackedRoles, sinceDate, untilDate);
 
       for (const [userId, userData] of channelStats) {
         if (!allUserStats.has(userId)) {
