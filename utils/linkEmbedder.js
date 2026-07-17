@@ -7,7 +7,7 @@ const path     = require('path');
 const os       = require('os');
 const { AttachmentBuilder } = require('discord.js');
 
-const EMBED_ROLE_ID  = '1502603423923699833';
+const EMBED_ROLE_ID  = '1357231374494466069';
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB Discord free limit
 
 // ── URL detection ─────────────────────────────────────────────────────────────
