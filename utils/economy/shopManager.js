@@ -1,4 +1,3 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('./database.js');
 
 const ROLE_PRICE = 100000;        // changed from 60000
@@ -220,6 +219,14 @@ function getRoleOwner(roleId) {
   });
 }
 
+function getActiveRoleForOwner(ownerId) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT roleId, expirationDate FROM purchased_roles WHERE ownerId = ?', [ownerId], (err, row) => {
+      if (err) reject(err); else resolve(row);
+    });
+  });
+}
+
 function getRoleMemberCount(roleId) {
   return new Promise((resolve, reject) => {
     db.get('SELECT COUNT(*) as count FROM role_members WHERE roleId = ?', [roleId], (err, row) => {
@@ -255,15 +262,13 @@ async function checkExpiredRoles(client, logChannelId) {
       } else if (timeLeft <= EXPIRATION_WARNING_MS && timeLeft > 0) {
         const owner = await client.users.fetch(row.ownerId).catch(() => null);
         if (owner) {
-          const buttonRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`extend_role_${row.roleId}`)
-              .setLabel(`Extend for ${ROLE_PRICE} coins`)
-              .setStyle(ButtonStyle.Primary)
-          );
+          // NOTE: buttons sent via DM are unreliable — Discord doesn't
+          // consistently deliver DM component interactions to bots unless
+          // the app is specifically configured for DM contexts. Using a
+          // plain-text pointer to an in-server command instead, which always
+          // works regardless of DM interaction settings.
           owner.send({
-            content: `⚠️ Your role <@&${row.roleId}> expires in less than 24 hours. Extend it for **${ROLE_PRICE}** coins.`,
-            components: [buttonRow]
+            content: `⚠️ Your role <@&${row.roleId}> expires in less than 24 hours.\n\nTo extend it for another 30 days (**${ROLE_PRICE}** coins), run \`/extendrole\` in <#1464140979148689550>.`,
           }).catch(console.error);
         }
       }
