@@ -68,7 +68,7 @@ module.exports = {
       checkExpiredRoles(client, '1380869949463199856');
       setInterval(() => {
         checkExpiredRoles(client, '1380869949463199856');
-      }, 24 * 60 * 60 * 1000);
+      }, 6 * 60 * 60 * 1000);
       console.log('💰 Economy system activated – role expiration checker running');
     } catch (error) {
       console.error('❌ Error starting economy expiration checker:', error);
