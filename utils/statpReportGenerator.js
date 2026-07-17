@@ -17,16 +17,15 @@ class StatpReportGenerator {
 
   /**
    * Build the per-member embed.
-   * @param {string}  userId    Discord user ID
-   * @param {object}  userData  { username, total, channels: Map<channelKey, count> }
-   * @param {Date}    reportDate  Any date in the reported month
+   * @param {string}  userId       Discord user ID
+   * @param {object}  userData     { username, total, channels: Map<channelKey, count> }
+   * @param {string}  periodLabel  Pre-formatted label for the reported period,
+   *                               e.g. "June 2026" or "12 Jun 2026 – 12 Jul 2026"
    */
-  generateMemberEmbed(userId, userData, reportDate) {
-    const monthLabel = `${MONTH_NAMES[reportDate.getMonth()]} ${reportDate.getFullYear()}`;
-
+  generateMemberEmbed(userId, userData, periodLabel) {
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
-      .setTitle(`📊 Monthly Report — ${monthLabel}`)
+      .setTitle(`📊 Report — ${periodLabel}`)
       .setTimestamp()
       .setFooter({ text: 'Monthly Statp Report' });
 
