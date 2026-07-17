@@ -1,9 +1,10 @@
 const cron = require('node-cron');
-
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+const {
+  getPreviousMonthRange,
+  getRolling30DayRange,
+  formatRiyadhNow,
+  msUntilNextMonthlyRun,
+} = require('./dateHelpers.js');
 
 class Scheduler {
   constructor(client, attachmentCounter, reportGenerator, statpScanner, statpReportGenerator, config) {
@@ -14,62 +15,67 @@ class Scheduler {
     this.statpReportGenerator = statpReportGenerator;
     this.config = config;
 
-    // Locks to prevent overlapping runs
-    this.isMonthlyRunning = false;
-    this.isStatpRunning = false;
+    // Single combined lock — statm and statp now always run sequentially
+    // (statm first, then statp) rather than as two independent cron jobs
+    // firing at the same instant, which was causing them to race/conflict.
+    this.isAutomaticRunInProgress = false;
+    this.isManualMonthlyRunning = false;
+    this.isManualStatpRunning = false;
   }
 
-  // ─── Schedule both monthly reports ──────────────────────────────────────────
+  // ─── Schedule both monthly reports (combined, sequential) ───────────────────
 
   scheduleReports() {
     const timezone = this.config.attachmentCounter.timezone; // Asia/Riyadh
+    const schedule = this.config.attachmentCounter.monthlySchedule; // "0 1 1 * *"
 
-    // Regular monthly report — 1:00 AM Riyadh on the 1st of every month
-    const monthlySchedule = this.config.attachmentCounter.monthlySchedule; // "0 1 1 * *"
-    console.log(`⏰ Scheduling regular monthly report: "${monthlySchedule}" (1 AM Riyadh, 1st of month)`);
+    console.log(`⏰ Scheduling automatic monthly reports (statm → statp): "${schedule}" (1 AM Riyadh, 1st of month)`);
+    console.log(`🕐 Current time: ${formatRiyadhNow()}`);
+    const { next, msUntil } = msUntilNextMonthlyRun();
+    const hoursUntil = (msUntil / (60 * 60 * 1000)).toFixed(1);
+    console.log(`⏳ Next automatic run: ${next.toISOString()} (in ~${hoursUntil}h). This holds regardless of bot restarts — cron only fires at the scheduled time.`);
 
-    cron.schedule(monthlySchedule, async () => {
-      if (this.isMonthlyRunning) {
-        console.log('⚠️ Regular monthly report already in progress, skipping...');
+    // Single cron job handles BOTH reports, sequentially, so they never run
+    // at the same moment and never conflict with each other.
+    cron.schedule(schedule, async () => {
+      if (this.isAutomaticRunInProgress) {
+        console.log('⚠️ Automatic monthly report run already in progress, skipping...');
         return;
       }
-      this.isMonthlyRunning = true;
-      console.log('🔄 Starting scheduled regular monthly report...');
-      try {
-        await this.generateAndSendReport('monthly');
-        console.log('✅ Scheduled regular monthly report completed');
-      } catch (error) {
-        console.error('❌ Error in scheduled regular monthly report:', error);
-      } finally {
-        this.isMonthlyRunning = false;
-      }
-    }, { scheduled: true, timezone });
+      this.isAutomaticRunInProgress = true;
 
-    // Statp monthly report — same schedule: 1:00 AM Riyadh on the 1st
-    const statpSchedule = this.config.statp.monthlySchedule; // "0 1 1 * *"
-    console.log(`⏰ Scheduling statp monthly report:   "${statpSchedule}" (1 AM Riyadh, 1st of month)`);
+      // Both reports cover the full PREVIOUS calendar month (Riyadh time),
+      // computed once so statm and statp use the exact same window.
+      const dateRange = getPreviousMonthRange();
+      console.log(`🔄 Starting automatic monthly reports for period: ${dateRange.label}`);
 
-    cron.schedule(statpSchedule, async () => {
-      if (this.isStatpRunning) {
-        console.log('⚠️ Statp monthly report already in progress, skipping...');
-        return;
-      }
-      this.isStatpRunning = true;
-      console.log('🔄 Starting scheduled statp monthly report...');
       try {
-        await this.generateAndSendStatpReport();
-        console.log('✅ Scheduled statp monthly report completed');
+        console.log('  → [1/2] Running statm (regular monthly report)...');
+        await this.generateAndSendReport('monthly', dateRange, dateRange.label);
+        console.log('  ✅ [1/2] statm complete.');
       } catch (error) {
-        console.error('❌ Error in scheduled statp monthly report:', error);
-      } finally {
-        this.isStatpRunning = false;
+        console.error('  ❌ [1/2] Error in automatic statm report:', error);
       }
+
+      try {
+        console.log('  → [2/2] Running statp...');
+        await this.generateAndSendStatpReport(dateRange, dateRange.label);
+        console.log('  ✅ [2/2] statp complete.');
+      } catch (error) {
+        console.error('  ❌ [2/2] Error in automatic statp report:', error);
+      }
+
+      this.isAutomaticRunInProgress = false;
+      console.log('✅ Automatic monthly report run finished (statm + statp).');
     }, { scheduled: true, timezone });
   }
 
   // ─── Regular monthly report (all tracked categories) ────────────────────────
+  // dateRange (optional): { since, until, label } — when provided, overrides
+  // the default "current month to now" window. periodLabel overrides the
+  // display label shown in the per-user embed's REPORT PERIOD field.
 
-  async generateAndSendReport(reportType = 'monthly') {
+  async generateAndSendReport(reportType = 'monthly', dateRange = null, periodLabel = null) {
     const reportChannelId = this.config.attachmentCounter.reportChannel;
 
     const reportChannel = this.client.channels.cache.get(reportChannelId);
@@ -89,12 +95,14 @@ class Scheduler {
     // Reset channel cache so a fresh scan picks up any new channels
     this.attachmentCounter.allChannelsCache = [];
 
-    const userStats = await this.attachmentCounter.scanChannels(this.config, reportType);
+    const userStats = await this.attachmentCounter.scanChannels(this.config, reportType, dateRange);
     console.log(`📊 Scan complete — ${userStats.size} users found`);
+
+    const labelSuffix = periodLabel ? ` — ${periodLabel}` : '';
 
     if (userStats.size === 0) {
       await reportChannel.send(
-        `📊 **MONTHLY MEDIA REPORT**\n\nNo media found from tracked roles this month. 📭`
+        `📊 **MONTHLY MEDIA REPORT${labelSuffix}**\n\nNo media found from tracked roles this period. 📭`
       );
       return;
     }
@@ -115,7 +123,7 @@ class Scheduler {
       .join(' ');
 
     await reportChannel.send({
-      content: `📊 **MONTHLY MEDIA REPORT**\n\n**All Contributors:** ${allMentions}\n**Total Media:** ${totalMedia} items from ${userStats.size} users`,
+      content: `📊 **MONTHLY MEDIA REPORT${labelSuffix}**\n\n**All Contributors:** ${allMentions}\n**Total Media:** ${totalMedia} items from ${userStats.size} users`,
       embeds: [mainEmbed],
     });
 
@@ -126,7 +134,7 @@ class Scheduler {
       if (userData.total > 0) {
         try {
           const userEmbed = this.reportGenerator.generateUserEmbed(
-            userId, userData, this.client, reportType
+            userId, userData, this.client, reportType, periodLabel
           );
           await reportChannel.send({
             content: `**User Report:** <@${userId}>`,
@@ -142,9 +150,11 @@ class Scheduler {
     console.log(`✅ Monthly report complete — sent ${sent} user reports`);
   }
 
-  // ─── Statp monthly report (targeted channels + role) ────────────────────────
+  // ─── Statp report (targeted channels + role) ─────────────────────────────────
+  // dateRange (optional): { since, until, label } — overrides default
+  // "current month to now" window. periodLabel overrides the header text.
 
-  async generateAndSendStatpReport() {
+  async generateAndSendStatpReport(dateRange = null, periodLabel = null) {
     const reportChannelId = this.config.statp.reportChannel;
 
     const reportChannel = this.client.channels.cache.get(reportChannelId);
@@ -162,21 +172,20 @@ class Scheduler {
     // Reset channel cache for a fresh scan
     this.statpScanner.statpChannelsCache = [];
 
-    const userStats = await this.statpScanner.scanStatp(this.config);
+    const userStats = await this.statpScanner.scanStatp(this.config, dateRange);
 
-    const now = new Date();
-    const monthLabel = `${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
+    const label = periodLabel || (dateRange && dateRange.label) || 'This Month';
 
     if (userStats.size === 0) {
       await reportChannel.send(
-        `📊 **MONTHLY STATP REPORT — ${monthLabel}**\n\nNo media found from tracked role this month. 📭`
+        `📊 **STATP REPORT — ${label}**\n\nNo media found from tracked role this period. 📭`
       );
       return;
     }
 
     // Header
     await reportChannel.send(
-      `📊 **MONTHLY STATP REPORT — ${monthLabel}**\n` +
+      `📊 **STATP REPORT — ${label}**\n` +
       `**${userStats.size} member${userStats.size !== 1 ? 's' : ''} reported**`
     );
 
@@ -188,7 +197,7 @@ class Scheduler {
     let sent = 0;
     for (const [userId, userData] of sorted) {
       try {
-        const embed = this.statpReportGenerator.generateMemberEmbed(userId, userData, now);
+        const embed = this.statpReportGenerator.generateMemberEmbed(userId, userData, label);
         await reportChannel.send({
           content: `<@${userId}>`,
           embeds: [embed],
@@ -204,40 +213,44 @@ class Scheduler {
   }
 
   // ─── Manual triggers (called by slash commands) ──────────────────────────────
+  // Per spec: manual /statsm and /statp count the rolling 30 days ending at
+  // the moment the command was run — NOT the calendar month.
 
   async generateManualMonthlyReport(interaction = null) {
-    if (this.isMonthlyRunning) {
+    if (this.isManualMonthlyRunning) {
       if (interaction) await interaction.editReply('⚠️ Monthly report is already running!');
       return;
     }
-    this.isMonthlyRunning = true;
+    this.isManualMonthlyRunning = true;
     try {
-      if (interaction) await interaction.editReply('🔄 Generating monthly report… this may take a few minutes.');
-      await this.generateAndSendReport('monthly');
+      if (interaction) await interaction.editReply('🔄 Generating monthly report (last 30 days)… this may take a few minutes.');
+      const dateRange = getRolling30DayRange();
+      await this.generateAndSendReport('monthly', dateRange, dateRange.label);
       if (interaction) await interaction.editReply('✅ Monthly report done! Check the reports channel.');
     } catch (err) {
       console.error('❌ Manual monthly report error:', err);
       if (interaction) await interaction.editReply('❌ Error generating monthly report. Check console.');
     } finally {
-      this.isMonthlyRunning = false;
+      this.isManualMonthlyRunning = false;
     }
   }
 
   async generateManualStatpReport(interaction = null) {
-    if (this.isStatpRunning) {
+    if (this.isManualStatpRunning) {
       if (interaction) await interaction.editReply('⚠️ Statp report is already running!');
       return;
     }
-    this.isStatpRunning = true;
+    this.isManualStatpRunning = true;
     try {
-      if (interaction) await interaction.editReply('🔄 Generating statp report… this may take a few minutes.');
-      await this.generateAndSendStatpReport();
+      if (interaction) await interaction.editReply('🔄 Generating statp report (last 30 days)… this may take a few minutes.');
+      const dateRange = getRolling30DayRange();
+      await this.generateAndSendStatpReport(dateRange, dateRange.label);
       if (interaction) await interaction.editReply('✅ Statp report done! Check the report channel.');
     } catch (err) {
       console.error('❌ Manual statp report error:', err);
       if (interaction) await interaction.editReply('❌ Error generating statp report. Check console.');
     } finally {
-      this.isStatpRunning = false;
+      this.isManualStatpRunning = false;
     }
   }
 }
