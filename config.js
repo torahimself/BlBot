@@ -20,8 +20,6 @@ module.exports = {
     categoriesToScan: [
       "1357360836229730537",  // category 1
       "1357342267081359380",  // category 2
-      "1358456147191005336",  // category 3
-      "1428663907660202077"   // category 4
     ],
     // Individual channels/forums scanned directly, in addition to the
     // categories above (e.g. forums that live outside the scanned categories)
@@ -30,6 +28,7 @@ module.exports = {
       "1364718842491699260",
       "1364717999298187356",
       "1358611330340360255",
+      "1501688044892196965",
     ],
     // Channels to exclude from scanning (even if they're in the above categories)
     excludedChannels: [
