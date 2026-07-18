@@ -16,6 +16,21 @@ class AttachmentCounter {
 
     const allChannels = [];
 
+    // Explicit individual channels/forums (in addition to categories below)
+    for (const channelId of config.attachmentCounter.additionalChannels || []) {
+      const channel = this.client.channels.cache.get(channelId);
+      if (!channel) {
+        console.log(`⚠️ Additional channel not found: ${channelId}`);
+        continue;
+      }
+      if (!(channel.isTextBased() || channel.type === 15 || channel.type === 16) || channel.isThread()) {
+        console.log(`⚠️ Additional channel ${channelId} (${channel.name}) is not a scannable text/forum/media channel — skipping`);
+        continue;
+      }
+      allChannels.push(channelId);
+    }
+    console.log(`📌 Added ${allChannels.length} explicit additional channels`);
+
     // Get all text channels from each category
     for (const categoryId of config.attachmentCounter.categoriesToScan || []) {
       const category = this.client.channels.cache.get(categoryId);
