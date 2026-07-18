@@ -23,6 +23,14 @@ module.exports = {
       "1358456147191005336",  // category 3
       "1428663907660202077"   // category 4
     ],
+    // Individual channels/forums scanned directly, in addition to the
+    // categories above (e.g. forums that live outside the scanned categories)
+    additionalChannels: [
+      "1364196147475779615",
+      "1364718842491699260",
+      "1364717999298187356",
+      "1358611330340360255",
+    ],
     // Channels to exclude from scanning (even if they're in the above categories)
     excludedChannels: [
       "1390114909634957312",
@@ -50,19 +58,32 @@ module.exports = {
 
   // Statp system config — targeted monthly per-member report
   statp: {
-    // No explicit channel list needed — scanning by categories below
-    channels: [],
+    // Individual channels/forums scanned directly (in addition to any
+    // category-based channels below).
+    channels: [
+      "1364390818970079272",
+      "1364717468781908159",
+      "1364663053039435786",
+      "1428049269360955463",
+      "1428050046590390313",
+      "1357350344681717940",
+      "1428052930837090334",
+      "1357494760012779670",
+      "1357525159279333557",
+    ],
     // Categories to scan (all text + forum channels inside each will be scanned)
     categories: [
       "1358456147191005336",  // Boosters category (working)
       "1364189917412069457",  // Premium category (forums: ᴘ・ᴀʀᴀʙ, ᴍᴀɴɢᴀ, ʜᴇɴᴛᴀɪ, etc.)
     ],
-    // Channels to exclude even if they're inside a scanned category
+    // Channels to exclude even if they're inside a scanned category or in
+    // the explicit channels list above.
     excludedChannels: [
       "1390114909634957312",
       "1409520434466263100",
       "1364197015378198528",
       "1437817609587523674",
+      "1520073343137616083",
     ],
     // Only scan members who have this role
     trackedRole: "1407774752319344763",
