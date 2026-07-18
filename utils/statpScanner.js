@@ -18,7 +18,25 @@ class StatpScanner extends AttachmentCounter {
     const exclusions = config.statp.excludedChannels || [];
     const channels = [];
 
-    // Scan every category in the list
+    // 1. Explicit individual channels/forums listed directly
+    const explicitChannelIds = config.statp.channels || [];
+    for (const channelId of explicitChannelIds) {
+      if (exclusions.includes(channelId)) continue;
+
+      const channel = this.client.channels.cache.get(channelId);
+      if (!channel) {
+        console.log(`⚠️ [Statp] Explicit channel not found: ${channelId}`);
+        continue;
+      }
+      if (!(channel.isTextBased() || channel.type === 15 || channel.type === 16) || channel.isThread()) {
+        console.log(`⚠️ [Statp] Explicit channel ${channelId} (${channel.name}) is not a scannable text/forum/media channel — skipping`);
+        continue;
+      }
+      channels.push(channelId);
+    }
+    console.log(`📌 [Statp] Explicit channels added: ${channels.length}`);
+
+    // 2. Every category in the categories list
     const categoryIds = config.statp.categories || [];
     for (const categoryId of categoryIds) {
       const category = this.client.channels.cache.get(categoryId);
