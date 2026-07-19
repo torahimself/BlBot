@@ -1,5 +1,4 @@
 const config = require('../config.js');
-const { PermissionsBitField } = require('discord.js');
 
 let rotationInterval;
 let rotationCount = 0;
@@ -103,46 +102,6 @@ async function rotateChannel(client) {
     console.log(`🎯 Target position: ${targetPosition} (after position ${highestPosition})`);
     console.log(`📋 Creating new channel: ${config.rotation.targetChannelName}`);
 
-    // Start from the template channel's overwrites, then merge in any extra
-    // per-role overwrites configured for the rotation channel (added on top,
-    // not replacing whatever the template already grants that role).
-    const mergedOverwrites = new Map();
-    for (const [id, overwrite] of templateChannel.permissionOverwrites.cache) {
-      mergedOverwrites.set(id, {
-        id: overwrite.id,
-        type: overwrite.type,
-        allow: overwrite.allow.bitfield,
-        deny: overwrite.deny.bitfield,
-      });
-    }
-
-    for (const extra of config.rotation.additionalPermissionOverwrites || []) {
-      const allowBits = new PermissionsBitField(extra.allow || []).bitfield;
-      const denyBits = new PermissionsBitField(extra.deny || []).bitfield;
-      const existing = mergedOverwrites.get(extra.roleId);
-
-      if (existing) {
-        // Merge: OR the allow bits together, and remove any of the newly
-        // allowed permissions from the existing deny bits so they don't
-        // conflict (allow should win for permissions we're explicitly adding).
-        const newAllow = existing.allow | allowBits;
-        const newDeny = (existing.deny | denyBits) & ~allowBits;
-        mergedOverwrites.set(extra.roleId, {
-          id: extra.roleId,
-          type: 0, // role-type overwrite
-          allow: newAllow,
-          deny: newDeny,
-        });
-      } else {
-        mergedOverwrites.set(extra.roleId, {
-          id: extra.roleId,
-          type: 0,
-          allow: allowBits,
-          deny: denyBits,
-        });
-      }
-    }
-
     // Create channel with the custom topic
     const newChannel = await guild.channels.create({
       name: config.rotation.targetChannelName,
@@ -150,7 +109,7 @@ async function rotateChannel(client) {
       parent: config.rotation.categoryId,
       topic: "شات مخصص للرول بلاي - يرجى مراجعة القوانين",
       nsfw: templateChannel.nsfw,
-      permissionOverwrites: [...mergedOverwrites.values()],
+      permissionOverwrites: templateChannel.permissionOverwrites.cache,
       rateLimitPerUser: templateChannel.rateLimitPerUser,
     });
 
