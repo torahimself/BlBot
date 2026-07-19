@@ -57,6 +57,16 @@ function dbRun(query, params = []) {
   });
 }
 
+// Managed roles (Server Booster, bot-linked/integration roles, etc.) can
+// NEVER be added or removed by any bot via the API, regardless of
+// permissions or hierarchy — Discord rejects it as "Missing Permissions".
+// Whenever we call member.roles.set([...]), we must include the member's
+// current managed roles in that list untouched, or Discord will try (and
+// fail) to remove them as part of the same atomic operation.
+function getManagedRoleIds(member) {
+  return member.roles.cache.filter(r => r.managed).map(r => r.id);
+}
+
 async function getJailRecord(userId) {
   return dbGet('SELECT * FROM jailed_users WHERE userId = ?', [userId]);
 }
@@ -117,7 +127,11 @@ async function jailUser(client, guild, member, jailedBy, reason, durationMs, evi
   );
 
   try {
-    await member.roles.set([config.jail.jailRoleId], `Jailed by ${jailedBy.tag}: ${reason}`);
+    const managedRoleIds = getManagedRoleIds(member);
+    await member.roles.set(
+      [config.jail.jailRoleId, ...managedRoleIds],
+      `Jailed by ${jailedBy.tag}: ${reason}`
+    );
   } catch (err) {
     // Roll back the DB record if we couldn't actually apply the jail role,
     // so we don't end up with a "jailed" record that doesn't match reality.
@@ -161,10 +175,16 @@ async function unjailUser(client, guild, userId, unjailedBy, reason, evidenceAtt
 
   if (member) {
     // Only restore roles that still exist in the guild (a role may have
-    // been deleted while the user was jailed).
+    // been deleted while the user was jailed). Also retain any managed
+    // roles they currently have (e.g. Server Booster) — those were never
+    // touched during jailing and must stay untouched now too.
     const validRoles = previousRoles.filter(id => guild.roles.cache.has(id));
+    const managedRoleIds = getManagedRoleIds(member);
     try {
-      await member.roles.set(validRoles, `Unjailed by ${isAuto ? 'System (auto)' : unjailedBy.tag}: ${reason}`);
+      await member.roles.set(
+        [...new Set([...validRoles, ...managedRoleIds])],
+        `Unjailed by ${isAuto ? 'System (auto)' : unjailedBy.tag}: ${reason}`
+      );
     } catch (err) {
       console.error(`[Jail] Failed to restore roles for ${userId}:`, err.message);
     }
@@ -197,7 +217,11 @@ async function handleRejoin(client, member) {
   if (!record) return;
 
   try {
-    await member.roles.set([config.jail.jailRoleId], 'Re-jailed on rejoin (jail record still active)');
+    const managedRoleIds = getManagedRoleIds(member);
+    await member.roles.set(
+      [config.jail.jailRoleId, ...managedRoleIds],
+      'Re-jailed on rejoin (jail record still active)'
+    );
     await sendLog(client, {
       title: '🔁 Jailed User Rejoined — Re-Jailed',
       color: 0xE67E22,
@@ -250,11 +274,19 @@ async function runPeriodicCheck(client) {
     if (!member) continue; // not currently in server — handled on rejoin
 
     const hasJailRole = member.roles.cache.has(config.jail.jailRoleId);
-    const hasExtraRoles = member.roles.cache.some(r => r.id !== guild.id && r.id !== config.jail.jailRoleId);
+    // Managed roles (Booster, integrations) are legitimately retained during
+    // jailing — they don't count as "drift".
+    const hasExtraRoles = member.roles.cache.some(
+      r => r.id !== guild.id && r.id !== config.jail.jailRoleId && !r.managed
+    );
 
     if (!hasJailRole || hasExtraRoles) {
       try {
-        await member.roles.set([config.jail.jailRoleId], 'Jail state re-enforced (drift detected)');
+        const managedRoleIds = getManagedRoleIds(member);
+        await member.roles.set(
+          [config.jail.jailRoleId, ...managedRoleIds],
+          'Jail state re-enforced (drift detected)'
+        );
         reenforced++;
       } catch (err) {
         console.error(`[Jail] Failed to re-enforce jail state for ${record.userId}:`, err.message);
