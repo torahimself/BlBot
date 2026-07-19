@@ -6,12 +6,30 @@ module.exports = {
     serverId: "1357219315820269578",
     templateChannelId: "1357388121704239134",
     categoryId: "1357382666378280970",
-    targetChannelName: "👠．شات・الفساد",
+    targetChannelName: "👠．gooning・chat",
     positionChannels: [
       "1418663574493991144",
       "1357384022388379891"
     ],
     rotationInterval: 24 * 60 * 60 * 1000,
+    // Extra per-role permission overwrites applied to every newly-created
+    // rotation channel, on top of whatever is cloned from the template
+    // channel. If a role already has an overwrite from the template, these
+    // permissions are merged into it (added, not replacing existing allows).
+    additionalPermissionOverwrites: [
+      {
+        roleId: "1408975467540779088",
+        allow: [
+          "ViewChannel",
+          "SendMessages",
+          "ReadMessageHistory",
+          "EmbedLinks",
+          "AttachFiles",
+          "UseExternalEmojis",
+          "ManageMessages",
+        ],
+      },
+    ],
   },
 
   // Attachment counter system config
