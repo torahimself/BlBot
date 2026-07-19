@@ -10,6 +10,7 @@ const Scheduler = require('../utils/scheduler');
 const { checkExpiredRoles } = require('../utils/economy/shopManager.js');
 const { seedVoiceUsers } = require('../utils/economy/voiceTracker.js');
 const { startTracker } = require('../utils/twitterTracker.js');
+const { startPeriodicCheck: startJailCheck } = require('../utils/jail/jailManager.js');
 
 module.exports = {
   name: 'ready',
@@ -72,6 +73,14 @@ module.exports = {
       console.log('💰 Economy system activated – role expiration checker running');
     } catch (error) {
       console.error('❌ Error starting economy expiration checker:', error);
+    }
+
+    // Start jail system periodic check (auto-unjail expired sentences,
+    // re-enforce jail state for anyone whose roles drifted)
+    try {
+      startJailCheck(client);
+    } catch (error) {
+      console.error('❌ Error starting jail system periodic check:', error);
     }
 
     // Seed voice tracker with users already in voice channels
