@@ -88,4 +88,14 @@ module.exports = {
     monthlySchedule: "0 1 1 * *",
     timezone: "Asia/Riyadh",
   },
+
+  // Jail system config
+  jail: {
+    logChannelId: "1528228047352889445",
+    jailRoleId: "1528232163990835330",
+    // How often to run the background check: auto-unjail expired sentences,
+    // and re-enforce jail state for anyone whose roles drifted while still
+    // in the server (e.g. a role was manually restored outside /unjail).
+    checkIntervalMs: 2 * 60 * 1000, // 2 minutes
+  },
 };
