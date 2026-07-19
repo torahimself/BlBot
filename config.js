@@ -91,7 +91,7 @@ module.exports = {
 
   // Jail system config
   jail: {
-    logChannelId: "1528228047352889445",
+    logChannelId: "1357298793296433242",
     jailRoleId: "1357289247664640043",
     // How often to run the background check: auto-unjail expired sentences,
     // and re-enforce jail state for anyone whose roles drifted while still
