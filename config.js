@@ -93,6 +93,10 @@ module.exports = {
   jail: {
     logChannelId: "1357298793296433242",
     jailRoleId: "1357289247664640043",
+    // Roles (besides Administrator) allowed to use /jail and /unjail
+    staffRoleIds: [
+      "1408975467540779088",
+    ],
     // How often to run the background check: auto-unjail expired sentences,
     // and re-enforce jail state for anyone whose roles drifted while still
     // in the server (e.g. a role was manually restored outside /unjail).
