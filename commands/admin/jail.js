@@ -1,17 +1,19 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { jailUser, parseDuration } = require('../../utils/jail/jailManager.js');
+const config = require('../../config.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('jail')
-        .setDescription('Jail a user — strips their roles and applies the jail role (admin only)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDescription('Jail a user — strips their roles and applies the jail role (admin/staff only)')
         .addUserOption(option => option.setName('user').setDescription('User to jail').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('Reason for jailing').setRequired(true))
         .addStringOption(option => option.setName('duration').setDescription('Optional: e.g. "1d", "3h", "45m", "1d12h" — omit for permanent').setRequired(false))
         .addAttachmentOption(option => option.setName('evidence').setDescription('Optional: image or video evidence').setRequired(false)),
     async execute(interaction) {
-        if (!interaction.member.permissions.has('Administrator')) {
+        const isAdmin = interaction.member.permissions.has('Administrator');
+        const hasStaffRole = (config.jail.staffRoleIds || []).some(id => interaction.member.roles.cache.has(id));
+        if (!isAdmin && !hasStaffRole) {
             return interaction.editReply('❌ You do not have permission to use this command!');
         }
 
