@@ -104,7 +104,9 @@ async function sendLog(client, { title, color, fields, evidenceAttachment }) {
 }
 
 // ── Jail a user ────────────────────────────────────────────────────────────────
-async function jailUser(client, guild, member, jailedBy, reason, durationMs, evidenceAttachment) {
+// roleId: which jail role to apply — defaults to the normal jail role.
+// /jailp passes config.jail.jailpRoleId instead; everything else is identical.
+async function jailUser(client, guild, member, jailedBy, reason, durationMs, evidenceAttachment, roleId = config.jail.jailRoleId) {
   const existing = await getJailRecord(member.id);
   if (existing) {
     return { success: false, message: 'This user is already jailed. Use `/unjail` first if you want to re-jail them.' };
@@ -121,15 +123,15 @@ async function jailUser(client, guild, member, jailedBy, reason, durationMs, evi
   const releaseAt = durationMs ? jailedAt + durationMs : null;
 
   await dbRun(
-    `INSERT INTO jailed_users (userId, guildId, jailedBy, reason, jailedAt, releaseAt, previousRoles)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [member.id, guild.id, jailedBy.id, reason, jailedAt, releaseAt, JSON.stringify(previousRoles)]
+    `INSERT INTO jailed_users (userId, guildId, jailedBy, reason, jailedAt, releaseAt, previousRoles, jailRoleId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [member.id, guild.id, jailedBy.id, reason, jailedAt, releaseAt, JSON.stringify(previousRoles), roleId]
   );
 
   try {
     const managedRoleIds = getManagedRoleIds(member);
     await member.roles.set(
-      [config.jail.jailRoleId, ...managedRoleIds],
+      [roleId, ...managedRoleIds],
       `Jailed by ${jailedBy.tag}: ${reason}`
     );
   } catch (err) {
@@ -140,9 +142,10 @@ async function jailUser(client, guild, member, jailedBy, reason, durationMs, evi
   }
 
   const durationLabel = durationMs ? formatDuration(durationMs) : 'Permanent (no auto-unjail)';
+  const isJailp = roleId === config.jail.jailpRoleId;
 
   await sendLog(client, {
-    title: '🔒 User Jailed',
+    title: isJailp ? '🔒 User Jailed (jailp)' : '🔒 User Jailed',
     color: 0xE74C3C,
     fields: [
       { name: 'Moderator', value: `<@${jailedBy.id}> (${jailedBy.id})`, inline: false },
@@ -216,10 +219,14 @@ async function handleRejoin(client, member) {
   const record = await getJailRecord(member.id);
   if (!record) return;
 
+  // Records created before the jailRoleId column existed will have it as
+  // NULL — fall back to the normal jail role for those.
+  const roleId = record.jailRoleId || config.jail.jailRoleId;
+
   try {
     const managedRoleIds = getManagedRoleIds(member);
     await member.roles.set(
-      [config.jail.jailRoleId, ...managedRoleIds],
+      [roleId, ...managedRoleIds],
       'Re-jailed on rejoin (jail record still active)'
     );
     await sendLog(client, {
@@ -273,18 +280,19 @@ async function runPeriodicCheck(client) {
     const member = guild.members.cache.get(record.userId);
     if (!member) continue; // not currently in server — handled on rejoin
 
-    const hasJailRole = member.roles.cache.has(config.jail.jailRoleId);
+    const roleId = record.jailRoleId || config.jail.jailRoleId;
+    const hasJailRole = member.roles.cache.has(roleId);
     // Managed roles (Booster, integrations) are legitimately retained during
     // jailing — they don't count as "drift".
     const hasExtraRoles = member.roles.cache.some(
-      r => r.id !== guild.id && r.id !== config.jail.jailRoleId && !r.managed
+      r => r.id !== guild.id && r.id !== roleId && !r.managed
     );
 
     if (!hasJailRole || hasExtraRoles) {
       try {
         const managedRoleIds = getManagedRoleIds(member);
         await member.roles.set(
-          [config.jail.jailRoleId, ...managedRoleIds],
+          [roleId, ...managedRoleIds],
           'Jail state re-enforced (drift detected)'
         );
         reenforced++;
