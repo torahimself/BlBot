@@ -21,6 +21,16 @@ db.serialize(() => {
             previousRoles TEXT
         )
     `);
+
+    // Migration: add jailRoleId to support multiple jail role "types"
+    // (e.g. /jail vs /jailp). Existing rows will have NULL here, which
+    // jailManager.js treats as "the default jail role" for backward
+    // compatibility with records created before this column existed.
+    db.run(`ALTER TABLE jailed_users ADD COLUMN jailRoleId TEXT`, (err) => {
+        if (err && !/duplicate column/i.test(err.message)) {
+            console.error('[Jail] Migration error adding jailRoleId column:', err.message);
+        }
+    });
 });
 
 module.exports = db;
