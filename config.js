@@ -93,7 +93,10 @@ module.exports = {
   jail: {
     logChannelId: "1357298793296433242",
     jailRoleId: "1357289247664640043",
-    // Roles (besides Administrator) allowed to use /jail and /unjail
+    // Applied by /jailp instead of jailRoleId — everything else about
+    // /jailp works identically to /jail (same auto-scanner, same /unjail).
+    jailpRoleId: "1521866412396646451",
+    // Roles (besides Administrator) allowed to use /jail, /jailp, and /unjail
     staffRoleIds: [
       "1408975467540779088",
     ],
