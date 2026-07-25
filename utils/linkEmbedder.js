@@ -100,7 +100,24 @@ async function getTikTokVideoUrl(url) {
 
 // ── Instagram Reels: yt-dlp via Python (pip install yt-dlp runs on every boot) ─
 const { execFile } = require('child_process');
-const IG_COOKIES_FILE = path.join(__dirname, '../data/instagram_cookies.txt');
+
+// Two cookie files supported — requests alternate between them so neither
+// account absorbs the full request volume alone. Upload both via Pebble
+// File Manager, same as before. If only the first exists, everything just
+// uses that one (fully backward compatible with a single-cookie setup).
+const IG_COOKIES_FILES = [
+  path.join(__dirname, '../data/instagram_cookies.txt'),
+  path.join(__dirname, '../data/instagram_cookies_2.txt'),
+].filter(f => fs.existsSync(f));
+
+let igCookieRotationIndex = 0;
+
+function getNextIgCookiesFile() {
+  if (IG_COOKIES_FILES.length === 0) return null;
+  const file = IG_COOKIES_FILES[igCookieRotationIndex % IG_COOKIES_FILES.length];
+  igCookieRotationIndex++;
+  return file;
+}
 
 function runYtDlp(url, outputPath, cookiesFile) {
   return new Promise((resolve, reject) => {
@@ -142,10 +159,27 @@ function runYtDlp(url, outputPath, cookiesFile) {
 }
 
 async function downloadInstagramReel(url, tmpFile) {
-  if (!fs.existsSync(IG_COOKIES_FILE)) {
+  if (IG_COOKIES_FILES.length === 0) {
     throw new Error('Missing data/instagram_cookies.txt — upload your Instagram cookies via Pebble File Manager');
   }
-  await runYtDlp(url, tmpFile, IG_COOKIES_FILE);
+
+  const primary = getNextIgCookiesFile();
+  const primaryName = path.basename(primary);
+
+  try {
+    await runYtDlp(url, tmpFile, primary);
+    console.log(`[LinkEmbed] instagram downloaded using ${primaryName}`);
+  } catch (err) {
+    // If a second cookie file exists, automatically retry with it once —
+    // covers the case where the account we happened to pick is currently
+    // the one that's rate-limited.
+    if (IG_COOKIES_FILES.length < 2) throw err;
+
+    const fallback = IG_COOKIES_FILES.find(f => f !== primary);
+    console.warn(`[LinkEmbed] instagram failed on ${primaryName} (${err.message}) — retrying with ${path.basename(fallback)}...`);
+    await runYtDlp(url, tmpFile, fallback);
+    console.log(`[LinkEmbed] instagram downloaded using fallback ${path.basename(fallback)}`);
+  }
 }
 
 // ── Download video and return Discord payload ─────────────────────────────────
