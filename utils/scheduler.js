@@ -15,12 +15,14 @@ class Scheduler {
     this.statpReportGenerator = statpReportGenerator;
     this.config = config;
 
-    // Single combined lock — statm and statp now always run sequentially
-    // (statm first, then statp) rather than as two independent cron jobs
-    // firing at the same instant, which was causing them to race/conflict.
-    this.isAutomaticRunInProgress = false;
-    this.isManualMonthlyRunning = false;
-    this.isManualStatpRunning = false;
+    // Single shared lock per report type — checked by BOTH the automatic
+    // scheduled run AND manual /statsm or /statp commands, so they can
+    // never run concurrently against each other. Previously these were
+    // three separate flags that didn't check each other at all, meaning
+    // an automatic run and a manual command could fire at the same time
+    // and both scan overlapping channels simultaneously.
+    this.isMonthlyReportRunning = false;
+    this.isStatpReportRunning = false;
   }
 
   // ─── Schedule both monthly reports (combined, sequential) ───────────────────
@@ -38,16 +40,21 @@ class Scheduler {
     // Single cron job handles BOTH reports, sequentially, so they never run
     // at the same moment and never conflict with each other.
     cron.schedule(schedule, async () => {
-      if (this.isAutomaticRunInProgress) {
-        console.log('⚠️ Automatic monthly report run already in progress, skipping...');
+      if (this.isMonthlyReportRunning || this.isStatpReportRunning) {
+        console.log('⚠️ Automatic monthly report run skipped — a monthly/statp report (automatic or manual) is already in progress.');
         return;
       }
-      this.isAutomaticRunInProgress = true;
 
       // Both reports cover the full PREVIOUS calendar month (Riyadh time),
       // computed once so statm and statp use the exact same window.
       const dateRange = getPreviousMonthRange();
       console.log(`🔄 Starting automatic monthly reports for period: ${dateRange.label}`);
+
+      // Hold BOTH locks for the entire run (statm + statp), not just their
+      // individual phases — this closes the race window where a manual
+      // /statsm or /statp could otherwise sneak in between the two.
+      this.isMonthlyReportRunning = true;
+      this.isStatpReportRunning = true;
 
       try {
         console.log('  → [1/2] Running statm (regular monthly report)...');
@@ -63,9 +70,11 @@ class Scheduler {
         console.log('  ✅ [2/2] statp complete.');
       } catch (error) {
         console.error('  ❌ [2/2] Error in automatic statp report:', error);
+      } finally {
+        this.isMonthlyReportRunning = false;
+        this.isStatpReportRunning = false;
       }
 
-      this.isAutomaticRunInProgress = false;
       console.log('✅ Automatic monthly report run finished (statm + statp).');
     }, { scheduled: true, timezone });
   }
@@ -217,11 +226,11 @@ class Scheduler {
   // the moment the command was run — NOT the calendar month.
 
   async generateManualMonthlyReport(interaction = null) {
-    if (this.isManualMonthlyRunning) {
-      if (interaction) await interaction.editReply('⚠️ Monthly report is already running!');
+    if (this.isMonthlyReportRunning || this.isStatpReportRunning) {
+      if (interaction) await interaction.editReply('⚠️ A monthly/statp report (automatic or manual) is already running — try again once it finishes.');
       return;
     }
-    this.isManualMonthlyRunning = true;
+    this.isMonthlyReportRunning = true;
     try {
       if (interaction) await interaction.editReply('🔄 Generating monthly report (last 30 days)… this may take a few minutes.');
       const dateRange = getRolling30DayRange();
@@ -231,16 +240,16 @@ class Scheduler {
       console.error('❌ Manual monthly report error:', err);
       if (interaction) await interaction.editReply('❌ Error generating monthly report. Check console.');
     } finally {
-      this.isManualMonthlyRunning = false;
+      this.isMonthlyReportRunning = false;
     }
   }
 
   async generateManualStatpReport(interaction = null) {
-    if (this.isManualStatpRunning) {
-      if (interaction) await interaction.editReply('⚠️ Statp report is already running!');
+    if (this.isMonthlyReportRunning || this.isStatpReportRunning) {
+      if (interaction) await interaction.editReply('⚠️ A monthly/statp report (automatic or manual) is already running — try again once it finishes.');
       return;
     }
-    this.isManualStatpRunning = true;
+    this.isStatpReportRunning = true;
     try {
       if (interaction) await interaction.editReply('🔄 Generating statp report (last 30 days)… this may take a few minutes.');
       const dateRange = getRolling30DayRange();
@@ -250,7 +259,7 @@ class Scheduler {
       console.error('❌ Manual statp report error:', err);
       if (interaction) await interaction.editReply('❌ Error generating statp report. Check console.');
     } finally {
-      this.isManualStatpRunning = false;
+      this.isStatpReportRunning = false;
     }
   }
 }
