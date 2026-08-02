@@ -83,15 +83,32 @@ class AttachmentCounter {
     console.log(`🔍 Scanning ALL messages in ${channel.name} since ${sinceDate.toLocaleString()}${untilDate ? ` until ${untilDate.toLocaleString()}` : ''}`);
     
     const userStats = new Map();
-    let totalMessages = 0;
+    let totalMessages = 0;   // messages actually counted (within range, not skipped)
+    let totalFetched = 0;    // ALL messages fetched, including ones skipped for being outside range
     let totalMedia = 0;
     let lastMessageId = null;
     let hasMoreMessages = true;
     let batchCount = 0;
 
+    // Hard ceiling on batches fetched, regardless of how many were skipped
+    // vs counted. This is the real safety net: a channel with a huge volume
+    // of messages posted AFTER `untilDate` (e.g. a busy general chat, when
+    // scanning a past month) would previously page through those forever
+    // without ever tripping the old totalMessages-based cap, since skipped
+    // messages never incremented totalMessages. 500 batches = 50,000
+    // messages fetched — already an extremely generous ceiling for a single
+    // month's worth of activity in one channel.
+    const MAX_BATCHES = 500;
+
     try {
       while (hasMoreMessages) {
         batchCount++;
+
+        if (batchCount > MAX_BATCHES) {
+          console.warn(`⚠️ Hit hard batch ceiling (${MAX_BATCHES}) in ${channel.name} — stopping scan early. This channel may have unusually high message volume outside the target range; investigate if this recurs.`);
+          break;
+        }
+
         const options = { limit: 100 };
         if (lastMessageId) options.before = lastMessageId;
 
@@ -102,6 +119,8 @@ class AttachmentCounter {
           hasMoreMessages = false;
           break;
         }
+
+        totalFetched += messages.size;
 
         let batchOlderThanRange = false;
 
@@ -167,7 +186,17 @@ class AttachmentCounter {
         }
 
         await new Promise(resolve => setTimeout(resolve, 500));
+        // Two separate caps, guarding two different failure modes:
+        // 1. totalMessages (counted, in-range) — limits scan depth for an
+        //    extremely active channel that has huge volume WITHIN the
+        //    actual target range (original intended behavior).
+        // 2. totalFetched (everything fetched, including skipped-as-out-
+        //    of-range) — the real fix: protects against a channel with
+        //    massive volume AFTER untilDate that would otherwise page
+        //    through forever before ever reaching the target range at all,
+        //    since skipped messages never counted toward cap #1.
         if (totalMessages >= 2000) break;
+        if (totalFetched >= 50000) break;
       }
     } catch (error) {
       console.error(`❌ Error scanning channel ${channel.name}:`, error.message);
