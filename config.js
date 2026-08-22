@@ -105,4 +105,36 @@ module.exports = {
     // in the server (e.g. a role was manually restored outside /unjail).
     checkIntervalMs: 2 * 60 * 1000, // 2 minutes
   },
+
+  // Warning system config
+  warn: {
+    // /warn, /userhistory, /jailhistory only work in this channel
+    commandChannelId: "1357315018408071178",
+    logChannelId: "1540785088227188907",
+    // Roles (besides Administrator) allowed to use /warn, /userhistory,
+    // /warnedit, /warnremove, /jailhistory
+    staffRoleIds: [
+      "1408975467540779088",
+    ],
+    // Each warning individually expires this long after being issued.
+    expirationMs: 60 * 24 * 60 * 60 * 1000, // ~2 months (60 days)
+    // How often to scan for newly-expired warnings and log them.
+    checkIntervalMs: 30 * 60 * 1000, // 30 minutes
+    // Punishment ladder — keyed by active warning count AT the moment the
+    // new warning is issued. Counts not listed here (1st, 3rd, 5th, 7th,
+    // 9th) get no automatic punishment.
+    punishments: {
+      2: { type: 'timeout', ms: 2 * 60 * 60 * 1000 },
+      4: { type: 'timeout', ms: 4 * 60 * 60 * 1000 },
+      6: { type: 'timeout', ms: 6 * 60 * 60 * 1000 },
+      8: { type: 'jail', ms: 24 * 60 * 60 * 1000 },
+      10: { type: 'ban', reason: '10th Warn Reached' },
+    },
+    // Bot that owns a separate XP/level system — the 8th-warning punishment
+    // is supposed to also reset the user's level there via /remove-xp, but
+    // Discord provides no API for one bot to invoke another bot's slash
+    // command. This is left here for reference; the code logs a manual-
+    // action reminder instead of attempting it.
+    xpBotId: "1247628715618336808",
+  },
 };
