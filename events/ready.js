@@ -11,6 +11,7 @@ const { checkExpiredRoles } = require('../utils/economy/shopManager.js');
 const { seedVoiceUsers } = require('../utils/economy/voiceTracker.js');
 const { startTracker } = require('../utils/twitterTracker.js');
 const { startPeriodicCheck: startJailCheck } = require('../utils/jail/jailManager.js');
+const { startExpirationCheck: startWarnCheck } = require('../utils/warn/warnManager.js');
 
 module.exports = {
   name: 'ready',
@@ -81,6 +82,13 @@ module.exports = {
       startJailCheck(client);
     } catch (error) {
       console.error('❌ Error starting jail system periodic check:', error);
+    }
+
+    // Start warning system periodic check (logs individual warning expirations)
+    try {
+      startWarnCheck(client);
+    } catch (error) {
+      console.error('❌ Error starting warning system periodic check:', error);
     }
 
     // Seed voice tracker with users already in voice channels
