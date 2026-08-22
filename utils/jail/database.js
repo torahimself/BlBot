@@ -31,6 +31,26 @@ db.serialize(() => {
             console.error('[Jail] Migration error adding jailRoleId column:', err.message);
         }
     });
+
+    // Permanent archive — every jail, once unjailed (manually or via
+    // auto-expiry), gets copied here before being removed from the active
+    // table, so /jail history has something to read.
+    db.run(`
+        CREATE TABLE IF NOT EXISTS jail_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            userId TEXT,
+            guildId TEXT,
+            jailedBy TEXT,
+            jailReason TEXT,
+            jailedAt INTEGER,
+            releaseAt INTEGER,
+            jailRoleId TEXT,
+            unjailedBy TEXT,
+            unjailReason TEXT,
+            unjailedAt INTEGER,
+            wasAuto INTEGER
+        )
+    `);
 });
 
 module.exports = db;
