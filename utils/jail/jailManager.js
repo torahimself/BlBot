@@ -167,6 +167,17 @@ async function unjailUser(client, guild, userId, unjailedBy, reason, evidenceAtt
     return { success: false, message: 'This user is not currently jailed.' };
   }
 
+  const unjailedAt = Date.now();
+
+  // Archive to permanent history BEFORE deleting the active record, so
+  // /jail history has something to read after this unjail completes.
+  await dbRun(
+    `INSERT INTO jail_history (userId, guildId, jailedBy, jailReason, jailedAt, releaseAt, jailRoleId, unjailedBy, unjailReason, unjailedAt, wasAuto)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [record.userId, record.guildId, record.jailedBy, record.reason, record.jailedAt, record.releaseAt, record.jailRoleId,
+     isAuto ? null : unjailedBy.id, reason, unjailedAt, isAuto ? 1 : 0]
+  );
+
   await dbRun('DELETE FROM jailed_users WHERE userId = ?', [userId]);
 
   let previousRoles = [];
@@ -315,6 +326,10 @@ function startPeriodicCheck(client) {
   console.log(`🔒 Jail system periodic check started (every ${config.jail.checkIntervalMs / 60000} min)`);
 }
 
+async function getJailHistory(userId) {
+  return dbAll('SELECT * FROM jail_history WHERE userId = ? ORDER BY jailedAt DESC', [userId]);
+}
+
 module.exports = {
   parseDuration,
   formatDuration,
@@ -325,4 +340,5 @@ module.exports = {
   startPeriodicCheck,
   getJailRecord,
   getAllJailRecords,
+  getJailHistory,
 };
