@@ -7,7 +7,8 @@ module.exports = {
         .setName('warn')
         .setDescription('Issue a warning to a user (staff only)')
         .addUserOption(option => option.setName('user').setDescription('User to warn').setRequired(true))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for the warning').setRequired(true)),
+        .addStringOption(option => option.setName('reason').setDescription('Reason for the warning').setRequired(true))
+        .addAttachmentOption(option => option.setName('evidence').setDescription('Optional: evidence for this warning').setRequired(false)),
     async execute(interaction) {
         const isAdmin = interaction.member.permissions.has('Administrator');
         const hasStaffRole = (config.warn.staffRoleIds || []).some(id => interaction.member.roles.cache.has(id));
@@ -21,6 +22,7 @@ module.exports = {
 
         const targetUser = interaction.options.getUser('user');
         const reason = interaction.options.getString('reason');
+        const evidence = interaction.options.getAttachment('evidence');
 
         if (targetUser.id === interaction.client.user.id) {
             return interaction.editReply('❌ I cannot warn myself.');
@@ -35,7 +37,7 @@ module.exports = {
             return interaction.editReply('❌ That user is not in this server.');
         }
 
-        const result = await addWarning(interaction.client, guild, member, interaction.user, reason);
+        const result = await addWarning(interaction.client, guild, member, interaction.user, reason, evidence);
 
         await interaction.editReply(
             `✅ <@${targetUser.id}> has been warned (Warning ID: ${result.warningId}).\n` +
