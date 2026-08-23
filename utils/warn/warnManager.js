@@ -24,8 +24,6 @@ function dbRun(query, params = []) {
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 // "Active" = not manually removed AND not yet past its individual expiry.
-// Always computed live from timestamps, never a stored counter — editing or
-// removing a warning must immediately affect the count.
 async function getActiveWarnings(userId) {
   const now = Date.now();
   const all = await dbAll('SELECT * FROM warnings WHERE userId = ? AND removed = 0', [userId]);
@@ -61,10 +59,69 @@ function ordinalSuffix(n) {
   return s[(v - 20) % 10] || s[v] || s[0];
 }
 
+function formatMs(ms) {
+  const hours = ms / 3600000;
+  return Number.isInteger(hours) ? `${hours}-hour` : `${(ms / 60000).toFixed(0)}-minute`;
+}
+
+// ── DM notifications ──────────────────────────────────────────────────────────
+// Sent to the WARNED USER only — never to the staff member who issued it.
+// Wrapped defensively: a user with DMs closed must never break the flow.
+async function dmUser(client, userId, embed) {
+  try {
+    const user = await client.users.fetch(userId);
+    await user.send({ embeds: [embed] });
+    return true;
+  } catch (err) {
+    console.warn(`[Warn] Could not DM user ${userId} (DMs likely closed): ${err.message}`);
+    return false;
+  }
+}
+
+async function sendWarningDM(client, member, warning, activeCount) {
+  const embed = new EmbedBuilder()
+    .setColor(0xE67E22)
+    .setTitle('⚠️ You have received a warning')
+    .addFields(
+      { name: 'Reason', value: warning.reason, inline: false },
+      { name: 'Warning count', value: `${activeCount}`, inline: true },
+      { name: 'Date/time', value: `<t:${Math.floor(warning.issuedAt / 1000)}:f>`, inline: true },
+      { name: 'Evidence', value: warning.evidenceUrl ? `[View evidence](${warning.evidenceUrl})` : 'No evidence provided.', inline: false },
+    )
+    .setTimestamp();
+  await dmUser(client, member.id, embed);
+}
+
+async function sendPunishmentDM(client, userId, punishmentType, punishment, activeCount, warnReason) {
+  let title, description;
+
+  if (punishmentType === 'timeout') {
+    title = '⏱️ You have received a timeout';
+    description = `You have reached **${activeCount}** warnings, so you have received a **${formatMs(punishment.ms)}** timeout.`;
+  } else if (punishmentType === 'jail') {
+    title = '🔒 You have been jailed';
+    description = `You have reached **${activeCount}** warnings, so you have been **jailed for 1 day**.`;
+  } else if (punishmentType === 'ban') {
+    title = '🔨 You have been banned';
+    description = `You have reached **${activeCount}** warnings, so you have been **permanently banned** from the server.`;
+  } else {
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xC0392B)
+    .setTitle(title)
+    .setDescription(description)
+    .addFields(
+      { name: 'Punishment type', value: punishmentType, inline: true },
+      { name: 'Trigger', value: `Reaching ${activeCount} active warnings`, inline: true },
+      { name: 'Underlying warning reason', value: warnReason, inline: false },
+    )
+    .setTimestamp();
+  await dmUser(client, userId, embed);
+}
+
 // ── Punishment execution ──────────────────────────────────────────────────────
-// Returns metadata that gets stored ON the warning row, so a later removal
-// can determine exactly what this specific warning caused and whether it's
-// still active — without accidentally touching an unrelated punishment.
 async function applyPunishment(client, guild, member, punishment, warnCount, warnReason) {
   if (!punishment) return { punishmentType: 'none' };
 
@@ -78,8 +135,6 @@ async function applyPunishment(client, guild, member, punishment, warnCount, war
 
     if (punishment.type === 'jail') {
       const result = await jailUser(client, guild, member, client.user, reason, punishment.ms, null);
-      // Manual-action reminder: no Discord API lets one bot invoke another
-      // bot's slash command, so the XP-level reset can't be automated.
       await sendLog(client, {
         title: '⚠️ Manual Action Needed',
         color: 0xF1C40F,
@@ -89,9 +144,6 @@ async function applyPunishment(client, guild, member, punishment, warnCount, war
         ],
       });
       if (!result.success) return { punishmentType: 'jail', punishmentAppliedAt: null, jailFailed: true };
-      // Store the JAIL RECORD's own jailedAt (authoritative), not our own
-      // clock read, so reversal can precisely match "is this the SAME jail
-      // instance" rather than a later, unrelated one.
       const jailRecord = await getJailRecord(member.id);
       return { punishmentType: 'jail', punishmentAppliedAt: jailRecord ? jailRecord.jailedAt : Date.now() };
     }
@@ -117,7 +169,7 @@ function describePunishment(applied, punishment) {
 }
 
 // ── Issue a warning ───────────────────────────────────────────────────────────
-async function addWarning(client, guild, member, issuedBy, reason) {
+async function addWarning(client, guild, member, issuedBy, reason, evidence = null) {
   const issuedAt = Date.now();
   const expiresAt = issuedAt + config.warn.expirationMs;
 
@@ -125,16 +177,12 @@ async function addWarning(client, guild, member, issuedBy, reason) {
   const warnNumberAtIssue = activeBefore.length + 1;
 
   const insertResult = await dbRun(
-    `INSERT INTO warnings (userId, guildId, issuedBy, reason, issuedAt, expiresAt, warnNumberAtIssue)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [member.id, guild.id, issuedBy.id, reason, issuedAt, expiresAt, warnNumberAtIssue]
+    `INSERT INTO warnings (userId, guildId, issuedBy, reason, issuedAt, expiresAt, warnNumberAtIssue, evidenceUrl, evidenceName)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [member.id, guild.id, issuedBy.id, reason, issuedAt, expiresAt, warnNumberAtIssue,
+     evidence ? evidence.url : null, evidence ? evidence.name : null]
   );
 
-  // Punishment is always based on the active count AFTER the new warning
-  // is added — this only happens here, on genuine NEW warnings. Removing a
-  // warning later never re-triggers this, even if the resulting count
-  // happens to land on a punishment tier (e.g. 3 → 2 after a removal does
-  // NOT apply the 2nd-warning punishment retroactively).
   const activeAfter = await getActiveWarnings(member.id);
   const activeCount = activeAfter.length;
 
@@ -146,6 +194,14 @@ async function addWarning(client, guild, member, issuedBy, reason) {
     [applied.punishmentType, applied.punishmentAppliedAt || null, applied.punishmentMs || null, insertResult.lastID]
   );
 
+  const warningRow = await getWarningById(insertResult.lastID);
+
+  // DM the WARNED USER (never the staff member who issued it).
+  await sendWarningDM(client, member, warningRow, activeCount);
+  if (punishment && applied.punishmentType !== 'none' && !applied.error) {
+    await sendPunishmentDM(client, member.id, applied.punishmentType, punishment, activeCount, reason);
+  }
+
   await sendLog(client, {
     title: '⚠️ Warning Issued',
     color: 0xE67E22,
@@ -153,6 +209,7 @@ async function addWarning(client, guild, member, issuedBy, reason) {
       { name: 'User', value: `<@${member.id}> (${member.id})`, inline: false },
       { name: 'Staff', value: `<@${issuedBy.id}> (${issuedBy.id})`, inline: false },
       { name: 'Reason', value: reason, inline: false },
+      { name: 'Evidence', value: evidence ? `[View](${evidence.url})` : 'No evidence provided.', inline: false },
       { name: 'Warning #', value: `${activeCount} (active)`, inline: true },
       { name: 'Punishment', value: describePunishment(applied, punishment), inline: true },
       { name: 'Warning ID', value: `${insertResult.lastID}`, inline: true },
@@ -194,65 +251,45 @@ async function editWarning(warningId, editedBy, field, newValue) {
   return { success: true, oldValue, newValue };
 }
 
-// ── Punishment reversal ───────────────────────────────────────────────────────
-// Only reverses a punishment that is (a) directly caused by THIS warning,
-// and (b) still currently active. Never touches a punishment that already
-// ended naturally, and never touches an unrelated punishment (e.g. a
-// different, later timeout/jail applied for another reason).
-async function reversePunishmentIfActive(client, guild, warning) {
+// ── Punishment reversal, keyed off RESULTING ACTIVE COUNT ────────────────────
+// Fixed model: reversal is triggered by the user's active count dropping
+// below a tier they'd previously reached — NOT by which specific warning
+// record was touched. So removing warning #1 (which itself caused no
+// punishment) can still correctly reverse warning #2's timeout, as long as
+// the resulting active count (1) is now below warning #2's tier (2).
+async function reverseSingleWarningPunishment(client, guild, warning) {
   if (!warning.punishmentType || warning.punishmentType === 'none') {
     return { hadPunishment: false, wasActive: false, actionTaken: 'none' };
-  }
-  if (warning.punishmentReversed) {
-    return { hadPunishment: true, wasActive: false, actionTaken: 'already reversed previously' };
   }
 
   const member = guild.members.cache.get(warning.userId) || await guild.members.fetch(warning.userId).catch(() => null);
 
   if (warning.punishmentType === 'timeout') {
     if (!member) return { hadPunishment: true, wasActive: false, actionTaken: 'user not in server, nothing to reverse' };
-
     const expectedUntil = warning.punishmentAppliedAt + warning.punishmentMs;
     const currentUntil = member.communicationDisabledUntilTimestamp;
-
-    // Only reverse if the CURRENT active timeout is the exact one this
-    // warning caused (matches expected expiry) — if it's different, a
-    // separate timeout was applied later for another reason; leave it alone.
-    const isThisTimeoutStillActive = currentUntil && Math.abs(currentUntil - expectedUntil) < 5000 && currentUntil > Date.now();
-
-    if (!isThisTimeoutStillActive) {
-      return { hadPunishment: true, wasActive: false, actionTaken: 'timeout already ended or was superseded, nothing to reverse' };
-    }
-
-    await member.timeout(null, 'Associated warning was removed');
+    const stillActive = currentUntil && Math.abs(currentUntil - expectedUntil) < 5000 && currentUntil > Date.now();
+    if (!stillActive) return { hadPunishment: true, wasActive: false, actionTaken: 'timeout already ended or was superseded, nothing to reverse' };
+    await member.timeout(null, 'Active warning count dropped below this punishment\'s threshold');
     return { hadPunishment: true, wasActive: true, actionTaken: 'timeout removed' };
   }
 
   if (warning.punishmentType === 'jail') {
     const jailRecord = await getJailRecord(warning.userId);
-    // Match on jailedAt to confirm it's the SAME jail instance this warning
-    // caused — if the user was unjailed and re-jailed since for another
-    // reason, jailedAt won't match, and we leave that unrelated jail alone.
-    const isThisJailStillActive = jailRecord && Math.abs(jailRecord.jailedAt - warning.punishmentAppliedAt) < 5000;
-
-    if (!isThisJailStillActive) {
-      return { hadPunishment: true, wasActive: false, actionTaken: 'jail already ended (or was a different jail), nothing to reverse' };
-    }
-
-    const result = await unjailUser(client, guild, warning.userId, client.user, 'Associated warning was removed', null, false);
+    const stillActive = jailRecord && Math.abs(jailRecord.jailedAt - warning.punishmentAppliedAt) < 5000;
+    if (!stillActive) return { hadPunishment: true, wasActive: false, actionTaken: 'jail already ended (or a different jail), nothing to reverse' };
+    const result = await unjailUser(client, guild, warning.userId, client.user, 'Active warning count dropped below this punishment\'s threshold', null, false);
     return { hadPunishment: true, wasActive: true, actionTaken: result.success ? 'user unjailed' : `unjail failed: ${result.message}` };
   }
 
   if (warning.punishmentType === 'ban') {
-    const punishmentConfig = config.warn.punishments[10]; // the ban tier's configured reason
+    const punishmentConfig = config.warn.punishments[10];
     const existingBan = await guild.bans.fetch(warning.userId).catch(() => null);
-
     if (!existingBan || existingBan.reason !== punishmentConfig.reason) {
-      return { hadPunishment: true, wasActive: false, actionTaken: 'user is not currently banned under this warning system\'s ban reason, nothing to reverse' };
+      return { hadPunishment: true, wasActive: false, actionTaken: 'user not currently banned under this system\'s ban reason, nothing to reverse' };
     }
-
     try {
-      await guild.bans.remove(warning.userId, 'Associated warning was removed');
+      await guild.bans.remove(warning.userId, 'Active warning count dropped below this punishment\'s threshold');
       return { hadPunishment: true, wasActive: true, actionTaken: 'ban lifted' };
     } catch (err) {
       return { hadPunishment: true, wasActive: true, actionTaken: `failed to lift ban: ${err.message}` };
@@ -260,6 +297,29 @@ async function reversePunishmentIfActive(client, guild, warning) {
   }
 
   return { hadPunishment: false, wasActive: false, actionTaken: 'none' };
+}
+
+// Call this after ANY active-count-reducing event (manual removal OR
+// natural expiration). Finds every not-yet-reversed punishment whose
+// triggering tier is now above the user's new active count, and reverses
+// each one that's genuinely still active.
+async function reversePunishmentsAboveCount(client, guild, userId, newActiveCount) {
+  const candidates = await dbAll(
+    `SELECT * FROM warnings WHERE userId = ? AND removed = 0 AND punishmentType IS NOT NULL
+     AND punishmentType != 'none' AND punishmentReversed = 0 AND warnNumberAtIssue > ?`,
+    [userId, newActiveCount]
+  );
+
+  const results = [];
+  for (const warning of candidates) {
+    const reversal = await reverseSingleWarningPunishment(client, guild, warning);
+    if (reversal.wasActive) {
+      await dbRun('UPDATE warnings SET punishmentReversed = 1, punishmentReversedAt = ?, punishmentReversedBy = ? WHERE id = ?',
+        [Date.now(), 'system', warning.id]);
+    }
+    results.push({ warning, reversal });
+  }
+  return results;
 }
 
 // ── Manually remove a warning (soft delete, audited, reverses punishment) ────
@@ -275,16 +335,18 @@ async function removeWarning(client, guild, warningId, removedBy, reason) {
     [removedBy.id, reason || null, Date.now(), warningId]
   );
 
-  // Removing a warning NEVER triggers a new punishment, even if the
-  // resulting count lands on a punishment tier — punishments only ever
-  // apply on genuine new warnings via addWarning().
-  const reversal = await reversePunishmentIfActive(client, guild, warning);
-  if (reversal.wasActive) {
-    await dbRun('UPDATE warnings SET punishmentReversed = 1, punishmentReversedAt = ?, punishmentReversedBy = ? WHERE id = ?',
-      [Date.now(), removedBy.id, warningId]);
-  }
-
   const activeAfter = await getActiveWarnings(warning.userId);
+
+  // Threshold-based reversal — may reverse THIS warning's own punishment,
+  // or a DIFFERENT warning's punishment, whichever tier is now unmet.
+  const reversals = await reversePunishmentsAboveCount(client, guild, warning.userId, activeAfter.length);
+  // Mark who performed the removal-triggered reversal (system function used
+  // 'system' as a placeholder above; overwrite with the actual staff member).
+  for (const { warning: w, reversal } of reversals) {
+    if (reversal.wasActive) {
+      await dbRun('UPDATE warnings SET punishmentReversedBy = ? WHERE id = ?', [removedBy.id, w.id]);
+    }
+  }
 
   const logFields = [
     { name: 'User', value: `<@${warning.userId}> (${warning.userId})`, inline: false },
@@ -295,21 +357,24 @@ async function removeWarning(client, guild, warningId, removedBy, reason) {
     { name: 'Warning count', value: `${activeBefore.length} → ${activeAfter.length}`, inline: true },
   ];
 
-  if (reversal.hadPunishment) {
-    logFields.push(
-      { name: 'Original punishment', value: warning.punishmentType, inline: true },
-      { name: 'Punishment status', value: reversal.wasActive ? 'Active — reversed' : 'Already inactive', inline: true },
-      { name: 'Action taken', value: reversal.actionTaken, inline: false },
-    );
+  const activeReversals = reversals.filter(r => r.reversal.wasActive);
+  if (activeReversals.length > 0) {
+    for (const { warning: w, reversal } of activeReversals) {
+      logFields.push({
+        name: `Punishment reverted (from Warning #${w.warnNumberAtIssue})`,
+        value: `Type: ${w.punishmentType}\nAction: ${reversal.actionTaken}`,
+        inline: false,
+      });
+    }
   }
 
   await sendLog(client, {
-    title: reversal.wasActive ? '🗑️ Warning Removed + Punishment Reversed' : '🗑️ Warning Manually Removed',
+    title: activeReversals.length > 0 ? '🗑️ Warning Removed + Punishment Reverted' : '🗑️ Warning Manually Removed',
     color: 0xE74C3C,
     fields: logFields,
   });
 
-  return { success: true, warning, activeCountBefore: activeBefore.length, activeCountAfter: activeAfter.length, reversal };
+  return { success: true, warning, activeCountBefore: activeBefore.length, activeCountAfter: activeAfter.length, reversals };
 }
 
 // ── Periodic expiration check ─────────────────────────────────────────────────
@@ -324,16 +389,33 @@ async function runExpirationCheck(client) {
     await dbRun('UPDATE warnings SET expiredLogged = 1 WHERE id = ?', [warning.id]);
     const activeAfter = await getActiveWarnings(warning.userId);
 
+    const guild = client.guilds.cache.get(warning.guildId);
+    let reversals = [];
+    if (guild) {
+      reversals = await reversePunishmentsAboveCount(client, guild, warning.userId, activeAfter.length);
+    }
+
+    const logFields = [
+      { name: 'User', value: `<@${warning.userId}> (${warning.userId})`, inline: false },
+      { name: 'Warning ID', value: `${warning.id}`, inline: true },
+      { name: 'Issued', value: `<t:${Math.floor(warning.issuedAt / 1000)}:f>`, inline: true },
+      { name: 'Expired', value: `<t:${Math.floor(warning.expiresAt / 1000)}:f>`, inline: true },
+      { name: 'Active warnings remaining', value: `${activeAfter.length}`, inline: false },
+    ];
+
+    const activeReversals = reversals.filter(r => r.reversal.wasActive);
+    for (const { warning: w, reversal } of activeReversals) {
+      logFields.push({
+        name: `Punishment reverted (from Warning #${w.warnNumberAtIssue})`,
+        value: `Type: ${w.punishmentType}\nAction: ${reversal.actionTaken}`,
+        inline: false,
+      });
+    }
+
     await sendLog(client, {
-      title: '⏳ Warning Expired',
+      title: '⏳ Warning Expired Automatically' + (activeReversals.length > 0 ? ' + Punishment Reverted' : ''),
       color: 0x95A5A6,
-      fields: [
-        { name: 'User', value: `<@${warning.userId}> (${warning.userId})`, inline: false },
-        { name: 'Warning ID', value: `${warning.id}`, inline: true },
-        { name: 'Issued', value: `<t:${Math.floor(warning.issuedAt / 1000)}:f>`, inline: true },
-        { name: 'Expired', value: `<t:${Math.floor(warning.expiresAt / 1000)}:f>`, inline: true },
-        { name: 'Active warnings remaining', value: `${activeAfter.length}`, inline: false },
-      ],
+      fields: logFields,
     });
   }
 
