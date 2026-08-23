@@ -3,6 +3,7 @@ const shopManager = require('../utils/economy/shopManager.js');
 const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const gameHandler = require('../handlers/gameHandler.js');
+const warnHistoryUI = require('../utils/warn/warnHistoryUI.js');
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
@@ -59,8 +60,30 @@ module.exports = {
       return;
     }
 
+    // ---------- SELECT MENUS ----------
+    if (interaction.isStringSelectMenu()) {
+      try {
+        const handled = await warnHistoryUI.handleSelectMenu(interaction);
+        if (handled) return;
+      } catch (err) {
+        console.error('warnHistoryUI.handleSelectMenu error:', err);
+      }
+      return;
+    }
+
     // ---------- BUTTONS ----------
     if (interaction.isButton()) {
+
+      // Route warning-history buttons to warnHistoryUI
+      if (interaction.customId.startsWith('warnhist_')) {
+        try {
+          const handled = await warnHistoryUI.handleButton(interaction);
+          if (handled) return;
+        } catch (err) {
+          console.error('warnHistoryUI.handleButton error:', err);
+        }
+        return;
+      }
 
       // Route game buttons to gameHandler
       if (GAME_BUTTON_PREFIXES.some(p => interaction.customId.startsWith(p))) {
@@ -175,6 +198,17 @@ module.exports = {
 
     // ---------- MODALS ----------
     if (interaction.isModalSubmit()) {
+
+      // Route warning-history edit modal to warnHistoryUI
+      if (interaction.customId.startsWith('warnhist_')) {
+        try {
+          const handled = await warnHistoryUI.handleModal(interaction);
+          if (handled) return;
+        } catch (err) {
+          console.error('warnHistoryUI.handleModal error:', err);
+        }
+        return;
+      }
 
       // Route game modals to gameHandler
       if (GAME_MODAL_PREFIXES.some(p => interaction.customId.startsWith(p))) {
