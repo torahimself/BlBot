@@ -6,7 +6,7 @@ const {
 } = require('discord.js');
 const config = require('../../config.js');
 const {
-  getAllWarnings, getActiveWarnings, getWarningById, isWarningActive,
+  getActiveWarnings, getWarningById, isWarningActive,
   editWarning, removeWarning, sendLog,
 } = require('./warnManager.js');
 
@@ -16,35 +16,41 @@ function hasAccess(member) {
   return isAdmin || hasStaffRole;
 }
 
-// ── Full history list view ────────────────────────────────────────────────────
+// ── Active-only history list view ─────────────────────────────────────────────
+// Removed and expired warnings intentionally do NOT appear here — they stay
+// fully recorded in the log channel, but the interactive view only ever
+// shows what's currently active, per spec.
 async function buildHistoryPayload(targetUser) {
-  const warnings = await getAllWarnings(targetUser.id);
-  const activeCount = warnings.filter(w => isWarningActive(w)).length;
+  const active = await getActiveWarnings(targetUser.id);
 
   const embed = new EmbedBuilder()
     .setColor(0x3498DB)
     .setTitle('User Warning History')
-    .setDescription(`**User:** <@${targetUser.id}>\n**User ID:** \`${targetUser.id}\`\n**Current Warnings:** \`${activeCount}\``)
+    .setDescription(`**User:** <@${targetUser.id}>\n**User ID:** \`${targetUser.id}\`\n**Current Warnings:** \`${active.length}\``)
     .setTimestamp();
 
-  if (warnings.length === 0) {
-    embed.addFields({ name: 'No warnings', value: 'This user has no warning history.' });
+  if (active.length === 0) {
+    embed.addFields({ name: 'No active warnings', value: 'This user has no active warnings.' });
     return { embeds: [embed], components: [] };
   }
 
-  for (const w of warnings.slice(0, 24)) {
-    const status = w.removed ? '🗑️ Removed' : (isWarningActive(w) ? '🟢 Active' : '⚪ Expired');
+  const sorted = active.sort((a, b) => b.issuedAt - a.issuedAt);
+
+  for (const w of sorted.slice(0, 24)) {
     embed.addFields({
       name: `Warning #${w.warnNumberAtIssue} (ID ${w.id})`,
-      value: `Reason: ${w.reason}\nIssued by: <@${w.issuedBy}>\nDate: <t:${Math.floor(w.issuedAt / 1000)}:d>\nStatus: ${status}`,
+      value:
+        `Reason: ${w.reason}\nIssued by: <@${w.issuedBy}>\nDate: <t:${Math.floor(w.issuedAt / 1000)}:d>\n` +
+        `Evidence: ${w.evidenceUrl ? `[View](${w.evidenceUrl})` : 'No evidence provided.'}\n` +
+        `Punishment: ${w.punishmentType && w.punishmentType !== 'none' ? `${w.punishmentType}${w.punishmentReversed ? ' (reversed)' : ''}` : 'None'}`,
       inline: false,
     });
   }
-  if (warnings.length > 24) {
-    embed.setFooter({ text: `Showing 24 of ${warnings.length} total (most recent first). Select menu shows the same 24.` });
+  if (sorted.length > 24) {
+    embed.setFooter({ text: `Showing 24 of ${sorted.length} active warnings (most recent first).` });
   }
 
-  const options = warnings.slice(0, 24).map(w => ({
+  const options = sorted.slice(0, 24).map(w => ({
     label: `Warning #${w.warnNumberAtIssue} — ID ${w.id}`,
     description: `${w.reason}`.slice(0, 90),
     value: String(w.id),
@@ -58,17 +64,20 @@ async function buildHistoryPayload(targetUser) {
   return { embeds: [embed], components: [new ActionRowBuilder().addComponents(select)] };
 }
 
-// ── Single-warning detail view (after selecting from the menu) ───────────────
+// ── Single-warning detail view ────────────────────────────────────────────────
 function buildDetailPayload(targetUserId, warning) {
-  const status = warning.removed ? '🗑️ Removed' : (isWarningActive(warning) ? '🟢 Active' : '⚪ Expired');
+  const status = isWarningActive(warning) ? '🟢 Active' : (warning.removed ? '🗑️ Removed' : '⚪ Expired');
 
   const embed = new EmbedBuilder()
     .setColor(0x3498DB)
     .setTitle(`Warning #${warning.warnNumberAtIssue} (ID ${warning.id})`)
     .setDescription(
       `**User:** <@${targetUserId}>\n**Reason:** ${warning.reason}\n**Issued by:** <@${warning.issuedBy}>\n` +
-      `**Date:** <t:${Math.floor(warning.issuedAt / 1000)}:f>\n**Status:** ${status}` +
-      (warning.punishmentType && warning.punishmentType !== 'none' ? `\n**Punishment:** ${warning.punishmentType}${warning.punishmentReversed ? ' (reversed)' : ''}` : '')
+      `**Date:** <t:${Math.floor(warning.issuedAt / 1000)}:f>\n**Status:** ${status}\n` +
+      `**Evidence:** ${warning.evidenceUrl ? `[View](${warning.evidenceUrl})` : 'No evidence provided.'}` +
+      (warning.punishmentType && warning.punishmentType !== 'none'
+        ? `\n**Punishment:** ${warning.punishmentType}${warning.punishmentReversed ? ' (reversed)' : ''}`
+        : '')
     )
     .setTimestamp();
 
@@ -76,20 +85,6 @@ function buildDetailPayload(targetUserId, warning) {
     new ButtonBuilder().setCustomId(`warnhist_edit_${targetUserId}_${warning.id}`).setLabel('Edit Warning').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`warnhist_remove_${targetUserId}_${warning.id}`).setLabel('Remove Warning').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`warnhist_back_${targetUserId}`).setLabel('Back to List').setStyle(ButtonStyle.Secondary),
-  ];
-
-  return { embeds: [embed], components: [new ActionRowBuilder().addComponents(buttons)] };
-}
-
-function buildRemoveConfirmPayload(targetUserId, warning) {
-  const embed = new EmbedBuilder()
-    .setColor(0xE74C3C)
-    .setTitle('Confirm Removal')
-    .setDescription(`Remove Warning #${warning.warnNumberAtIssue} (ID ${warning.id}) — "${warning.reason}"?\n\nIf this warning still has an **active** punishment tied to it, that punishment will also be reversed.`);
-
-  const buttons = [
-    new ButtonBuilder().setCustomId(`warnhist_removeconfirm_${targetUserId}_${warning.id}`).setLabel('Confirm Remove').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`warnhist_removecancel_${targetUserId}_${warning.id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
   ];
 
   return { embeds: [embed], components: [new ActionRowBuilder().addComponents(buttons)] };
@@ -168,27 +163,111 @@ async function handleButton(interaction) {
     return true;
   }
 
-  // warnhist_remove_<userId>_<warningId>
-  if (interaction.customId.startsWith('warnhist_remove_') && !interaction.customId.startsWith('warnhist_removeconfirm_') && !interaction.customId.startsWith('warnhist_removecancel_')) {
+  // warnhist_remove_<userId>_<warningId> — opens a modal asking for the
+  // removal reason, per spec (this was previously a bare confirm button
+  // with no way to actually enter a reason).
+  if (interaction.customId.startsWith('warnhist_remove_')) {
     const [, , targetUserId, warningIdStr] = interaction.customId.split('_');
     const warning = await getWarningById(parseInt(warningIdStr, 10));
     if (!warning) {
       await interaction.reply({ content: '❌ That warning no longer exists.', flags: 64 });
       return true;
     }
-    await interaction.update(buildRemoveConfirmPayload(targetUserId, warning));
+
+    const modal = new ModalBuilder()
+      .setCustomId(`warnhist_removemodal_${targetUserId}_${warning.id}`)
+      .setTitle(`Remove Warning #${warning.warnNumberAtIssue}`);
+
+    const reasonInput = new TextInputBuilder()
+      .setCustomId('reason').setLabel('Removal reason').setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('Why is this warning being removed?').setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+    await interaction.showModal(modal);
     return true;
   }
 
-  // warnhist_removeconfirm_<userId>_<warningId>
-  if (interaction.customId.startsWith('warnhist_removeconfirm_')) {
+  return false;
+}
+
+async function handleModal(interaction) {
+  if (!interaction.customId.startsWith('warnhist_')) return false;
+
+  if (!hasAccess(interaction.member)) {
+    await interaction.reply({ content: '❌ You do not have permission to use this.', flags: 64 });
+    return true;
+  }
+
+  // ── Edit modal ──────────────────────────────────────────────────────────
+  if (interaction.customId.startsWith('warnhist_editmodal_')) {
     const parts = interaction.customId.split('_');
     const targetUserId = parts[2];
     const warningId = parseInt(parts[3], 10);
 
-    const result = await removeWarning(interaction.client, interaction.guild, warningId, interaction.user, null);
+    const before = await getWarningById(warningId);
+    if (!before) {
+      await interaction.reply({ content: '❌ That warning no longer exists.', flags: 64 });
+      return true;
+    }
+
+    const newReason = interaction.fields.getTextInputValue('reason');
+    const newDate = interaction.fields.getTextInputValue('date');
+
+    let reasonResult = null, dateResult = null;
+    if (newReason !== before.reason) {
+      reasonResult = await editWarning(warningId, interaction.user, 'reason', newReason);
+    }
+    const beforeDateStr = new Date(before.issuedAt).toISOString().slice(0, 10);
+    if (newDate !== beforeDateStr) {
+      dateResult = await editWarning(warningId, interaction.user, 'date', newDate);
+      if (!dateResult.success) {
+        await interaction.reply({ content: `❌ ${dateResult.message}`, flags: 64 });
+        return true;
+      }
+    }
+
+    const after = await getWarningById(warningId);
+
+    if (reasonResult || dateResult) {
+      const fields = [
+        { name: 'User', value: `<@${targetUserId}> (${targetUserId})`, inline: false },
+        { name: 'Edited by', value: `<@${interaction.user.id}> (${interaction.user.id})`, inline: false },
+        { name: 'Warning ID / #', value: `${warningId} (#${before.warnNumberAtIssue})`, inline: true },
+      ];
+      if (reasonResult) fields.push(
+        { name: 'Old reason', value: reasonResult.oldValue, inline: false },
+        { name: 'New reason', value: reasonResult.newValue, inline: false },
+      );
+      if (dateResult) fields.push(
+        { name: 'Old date', value: beforeDateStr, inline: true },
+        { name: 'New date', value: newDate, inline: true },
+      );
+      fields.push({ name: 'Now active?', value: isWarningActive(after) ? 'Yes' : 'No', inline: true });
+      await sendLog(interaction.client, { title: '✏️ Warning Edited', color: 0x3498DB, fields });
+    }
+
+    // If the edit made it no longer active (e.g. backdated past expiry),
+    // it drops out of the active-only list — go back to the refreshed list
+    // rather than showing a detail view for a warning that's no longer shown there.
+    const targetUser = await interaction.client.users.fetch(targetUserId).catch(() => null);
+    if (targetUser) {
+      await interaction.update(await buildHistoryPayload(targetUser));
+    } else {
+      await interaction.update({ content: '✅ Warning updated.', embeds: [], components: [] });
+    }
+    return true;
+  }
+
+  // ── Remove modal (reason required) ─────────────────────────────────────
+  if (interaction.customId.startsWith('warnhist_removemodal_')) {
+    const parts = interaction.customId.split('_');
+    const targetUserId = parts[2];
+    const warningId = parseInt(parts[3], 10);
+    const reason = interaction.fields.getTextInputValue('reason');
+
+    const result = await removeWarning(interaction.client, interaction.guild, warningId, interaction.user, reason);
     if (!result.success) {
-      await interaction.update({ content: `❌ ${result.message}`, embeds: [], components: [] });
+      await interaction.reply({ content: `❌ ${result.message}`, flags: 64 });
       return true;
     }
 
@@ -198,86 +277,7 @@ async function handleButton(interaction) {
     return true;
   }
 
-  // warnhist_removecancel_<userId>_<warningId>
-  if (interaction.customId.startsWith('warnhist_removecancel_')) {
-    const parts = interaction.customId.split('_');
-    const warningId = parseInt(parts[3], 10);
-    const warning = await getWarningById(warningId);
-    if (!warning) {
-      await interaction.update({ content: '❌ That warning no longer exists.', embeds: [], components: [] });
-      return true;
-    }
-    await interaction.update(buildDetailPayload(parts[2], warning));
-    return true;
-  }
-
   return false;
-}
-
-async function handleModal(interaction) {
-  if (!interaction.customId.startsWith('warnhist_editmodal_')) return false;
-
-  if (!hasAccess(interaction.member)) {
-    await interaction.reply({ content: '❌ You do not have permission to use this.', flags: 64 });
-    return true;
-  }
-
-  const parts = interaction.customId.split('_');
-  const targetUserId = parts[2];
-  const warningId = parseInt(parts[3], 10);
-
-  const before = await getWarningById(warningId);
-  if (!before) {
-    await interaction.reply({ content: '❌ That warning no longer exists.', flags: 64 });
-    return true;
-  }
-
-  const newReason = interaction.fields.getTextInputValue('reason');
-  const newDate = interaction.fields.getTextInputValue('date');
-
-  let reasonResult = null, dateResult = null;
-
-  if (newReason !== before.reason) {
-    reasonResult = await editWarning(warningId, interaction.user, 'reason', newReason);
-  }
-
-  const beforeDateStr = new Date(before.issuedAt).toISOString().slice(0, 10);
-  if (newDate !== beforeDateStr) {
-    dateResult = await editWarning(warningId, interaction.user, 'date', newDate);
-    if (!dateResult.success) {
-      await interaction.reply({ content: `❌ ${dateResult.message}`, flags: 64 });
-      return true;
-    }
-  }
-
-  const after = await getWarningById(warningId);
-
-  if (reasonResult || dateResult) {
-    const fields = [
-      { name: 'User', value: `<@${targetUserId}> (${targetUserId})`, inline: false },
-      { name: 'Edited by', value: `<@${interaction.user.id}> (${interaction.user.id})`, inline: false },
-      { name: 'Warning ID / #', value: `${warningId} (#${before.warnNumberAtIssue})`, inline: true },
-    ];
-    if (reasonResult) fields.push(
-      { name: 'Old reason', value: reasonResult.oldValue, inline: false },
-      { name: 'New reason', value: reasonResult.newValue, inline: false },
-    );
-    if (dateResult) fields.push(
-      { name: 'Old date', value: reasonResult ? beforeDateStr : String(dateResult.oldValue), inline: true },
-      { name: 'New date', value: newDate, inline: true },
-    );
-    fields.push({ name: 'Now active?', value: isWarningActive(after) ? 'Yes' : 'No', inline: true });
-
-    await sendLog(interaction.client, { title: '✏️ Warning Edited', color: 0x3498DB, fields });
-  }
-
-  const targetUser = await interaction.client.users.fetch(targetUserId).catch(() => null);
-  if (targetUser) {
-    await interaction.update(buildDetailPayload(targetUserId, after));
-  } else {
-    await interaction.update({ content: '✅ Warning updated.', embeds: [], components: [] });
-  }
-  return true;
 }
 
 module.exports = {
