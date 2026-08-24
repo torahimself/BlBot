@@ -39,6 +39,7 @@ db.serialize(() => {
         ['punishmentReversedBy', 'TEXT'],
         ['evidenceUrl', 'TEXT'],
         ['evidenceName', 'TEXT'],
+        ['evidenceContentType', 'TEXT'],
     ];
     for (const [col, type] of punishmentColumns) {
         db.run(`ALTER TABLE warnings ADD COLUMN ${col} ${type}`, (err) => {
