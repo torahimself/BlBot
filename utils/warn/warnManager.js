@@ -43,13 +43,14 @@ function isWarningActive(warning) {
 }
 
 // ── Logging ───────────────────────────────────────────────────────────────────
-async function sendLog(client, { title, color, fields }) {
+async function sendLog(client, { title, color, fields, imageUrl }) {
   const channel = client.channels.cache.get(config.warn.logChannelId);
   if (!channel) {
     console.error(`[Warn] Log channel not found: ${config.warn.logChannelId}`);
     return;
   }
   const embed = new EmbedBuilder().setColor(color).setTitle(title).addFields(fields).setTimestamp();
+  if (imageUrl) embed.setImage(imageUrl);
   await channel.send({ embeds: [embed] }).catch(err => console.error('[Warn] Failed to send log:', err.message));
 }
 
@@ -57,6 +58,28 @@ function ordinalSuffix(n) {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
   return s[(v - 20) % 10] || s[v] || s[0];
+}
+
+// Discord embeds only support ONE inline image total, so this only applies
+// when a SINGLE warning is being shown (DMs, single-warning logs, the
+// detail view) — never in the multi-warning list view. For actual images,
+// this renders the evidence directly in the embed body via setImage(),
+// per spec: no "click to view" link for images. Non-image evidence (video,
+// etc.) has no embed-native inline preview, so it falls back to a link —
+// same real limitation encountered with video attachments elsewhere in
+// this bot; there's no Discord embed field that can inline video.
+function applyEvidenceToEmbed(embed, warning) {
+  if (!warning.evidenceUrl) {
+    embed.addFields({ name: 'Evidence', value: 'No evidence provided.', inline: false });
+    return embed;
+  }
+  if (warning.evidenceContentType && warning.evidenceContentType.startsWith('image/')) {
+    embed.setImage(warning.evidenceUrl);
+    embed.addFields({ name: 'Evidence', value: 'Image shown above.', inline: false });
+  } else {
+    embed.addFields({ name: 'Evidence', value: `[${warning.evidenceName || 'View file'}](${warning.evidenceUrl})`, inline: false });
+  }
+  return embed;
 }
 
 function formatMs(ms) {
@@ -86,9 +109,9 @@ async function sendWarningDM(client, member, warning, activeCount) {
       { name: 'Reason', value: warning.reason, inline: false },
       { name: 'Warning count', value: `${activeCount}`, inline: true },
       { name: 'Date/time', value: `<t:${Math.floor(warning.issuedAt / 1000)}:f>`, inline: true },
-      { name: 'Evidence', value: warning.evidenceUrl ? `[View evidence](${warning.evidenceUrl})` : 'No evidence provided.', inline: false },
     )
     .setTimestamp();
+  applyEvidenceToEmbed(embed, warning);
   await dmUser(client, member.id, embed);
 }
 
@@ -177,10 +200,10 @@ async function addWarning(client, guild, member, issuedBy, reason, evidence = nu
   const warnNumberAtIssue = activeBefore.length + 1;
 
   const insertResult = await dbRun(
-    `INSERT INTO warnings (userId, guildId, issuedBy, reason, issuedAt, expiresAt, warnNumberAtIssue, evidenceUrl, evidenceName)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO warnings (userId, guildId, issuedBy, reason, issuedAt, expiresAt, warnNumberAtIssue, evidenceUrl, evidenceName, evidenceContentType)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [member.id, guild.id, issuedBy.id, reason, issuedAt, expiresAt, warnNumberAtIssue,
-     evidence ? evidence.url : null, evidence ? evidence.name : null]
+     evidence ? evidence.url : null, evidence ? evidence.name : null, evidence ? evidence.contentType : null]
   );
 
   const activeAfter = await getActiveWarnings(member.id);
@@ -202,6 +225,8 @@ async function addWarning(client, guild, member, issuedBy, reason, evidence = nu
     await sendPunishmentDM(client, member.id, applied.punishmentType, punishment, activeCount, reason);
   }
 
+  const isImageEvidence = evidence && evidence.contentType && evidence.contentType.startsWith('image/');
+
   await sendLog(client, {
     title: '⚠️ Warning Issued',
     color: 0xE67E22,
@@ -209,11 +234,12 @@ async function addWarning(client, guild, member, issuedBy, reason, evidence = nu
       { name: 'User', value: `<@${member.id}> (${member.id})`, inline: false },
       { name: 'Staff', value: `<@${issuedBy.id}> (${issuedBy.id})`, inline: false },
       { name: 'Reason', value: reason, inline: false },
-      { name: 'Evidence', value: evidence ? `[View](${evidence.url})` : 'No evidence provided.', inline: false },
+      { name: 'Evidence', value: !evidence ? 'No evidence provided.' : (isImageEvidence ? 'Image shown below.' : `[${evidence.name}](${evidence.url})`), inline: false },
       { name: 'Warning #', value: `${activeCount} (active)`, inline: true },
       { name: 'Punishment', value: describePunishment(applied, punishment), inline: true },
       { name: 'Warning ID', value: `${insertResult.lastID}`, inline: true },
     ],
+    imageUrl: isImageEvidence ? evidence.url : null,
   });
 
   return { warningId: insertResult.lastID, activeCount, punishment, applied };
@@ -348,11 +374,14 @@ async function removeWarning(client, guild, warningId, removedBy, reason) {
     }
   }
 
+  const isImageEvidence = warning.evidenceContentType && warning.evidenceContentType.startsWith('image/');
+
   const logFields = [
     { name: 'User', value: `<@${warning.userId}> (${warning.userId})`, inline: false },
     { name: 'Removed by', value: `<@${removedBy.id}> (${removedBy.id})`, inline: false },
     { name: 'Warning ID / #', value: `${warningId} (was warning #${warning.warnNumberAtIssue})`, inline: true },
     { name: 'Original reason', value: warning.reason, inline: false },
+    { name: 'Original evidence', value: !warning.evidenceUrl ? 'No evidence provided.' : (isImageEvidence ? 'Image shown below.' : `[${warning.evidenceName}](${warning.evidenceUrl})`), inline: false },
     { name: 'Removal reason', value: reason || '*(none given)*', inline: false },
     { name: 'Warning count', value: `${activeBefore.length} → ${activeAfter.length}`, inline: true },
   ];
@@ -372,6 +401,7 @@ async function removeWarning(client, guild, warningId, removedBy, reason) {
     title: activeReversals.length > 0 ? '🗑️ Warning Removed + Punishment Reverted' : '🗑️ Warning Manually Removed',
     color: 0xE74C3C,
     fields: logFields,
+    imageUrl: isImageEvidence ? warning.evidenceUrl : null,
   });
 
   return { success: true, warning, activeCountBefore: activeBefore.length, activeCountAfter: activeAfter.length, reversals };
@@ -442,4 +472,5 @@ module.exports = {
   runExpirationCheck,
   startExpirationCheck,
   sendLog,
+  applyEvidenceToEmbed,
 };
