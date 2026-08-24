@@ -330,8 +330,14 @@ async function reverseSingleWarningPunishment(client, guild, warning) {
 // triggering tier is now above the user's new active count, and reverses
 // each one that's genuinely still active.
 async function reversePunishmentsAboveCount(client, guild, userId, newActiveCount) {
+  // NOTE: deliberately NOT filtering "removed = 0" here. When staff removes
+  // the exact warning that caused a punishment, that row gets removed=1
+  // BEFORE this runs — filtering on removed=0 would exclude the very
+  // warning whose punishment we need to find and reverse. Eligibility for
+  // reversal depends only on the tier vs. the new active count, never on
+  // whether the triggering warning record itself is still "active".
   const candidates = await dbAll(
-    `SELECT * FROM warnings WHERE userId = ? AND removed = 0 AND punishmentType IS NOT NULL
+    `SELECT * FROM warnings WHERE userId = ? AND punishmentType IS NOT NULL
      AND punishmentType != 'none' AND punishmentReversed = 0 AND warnNumberAtIssue > ?`,
     [userId, newActiveCount]
   );
