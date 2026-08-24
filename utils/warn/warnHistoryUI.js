@@ -7,7 +7,7 @@ const {
 const config = require('../../config.js');
 const {
   getActiveWarnings, getWarningById, isWarningActive,
-  editWarning, removeWarning, sendLog,
+  editWarning, removeWarning, sendLog, applyEvidenceToEmbed,
 } = require('./warnManager.js');
 
 function hasAccess(member) {
@@ -37,11 +37,23 @@ async function buildHistoryPayload(targetUser) {
   const sorted = active.sort((a, b) => b.issuedAt - a.issuedAt);
 
   for (const w of sorted.slice(0, 24)) {
+    let evidenceText;
+    if (!w.evidenceUrl) {
+      evidenceText = 'No evidence provided.';
+    } else if (w.evidenceContentType && w.evidenceContentType.startsWith('image/')) {
+      // Discord embeds only support ONE inline image total, so with
+      // multiple warnings listed here we can't show them all — select this
+      // warning to see the image rendered directly.
+      evidenceText = '📷 Image evidence attached — select this warning to view it.';
+    } else {
+      evidenceText = `[${w.evidenceName || 'View file'}](${w.evidenceUrl})`;
+    }
+
     embed.addFields({
       name: `Warning #${w.warnNumberAtIssue} (ID ${w.id})`,
       value:
         `Reason: ${w.reason}\nIssued by: <@${w.issuedBy}>\nDate: <t:${Math.floor(w.issuedAt / 1000)}:d>\n` +
-        `Evidence: ${w.evidenceUrl ? `[View](${w.evidenceUrl})` : 'No evidence provided.'}\n` +
+        `Evidence: ${evidenceText}\n` +
         `Punishment: ${w.punishmentType && w.punishmentType !== 'none' ? `${w.punishmentType}${w.punishmentReversed ? ' (reversed)' : ''}` : 'None'}`,
       inline: false,
     });
@@ -73,13 +85,14 @@ function buildDetailPayload(targetUserId, warning) {
     .setTitle(`Warning #${warning.warnNumberAtIssue} (ID ${warning.id})`)
     .setDescription(
       `**User:** <@${targetUserId}>\n**Reason:** ${warning.reason}\n**Issued by:** <@${warning.issuedBy}>\n` +
-      `**Date:** <t:${Math.floor(warning.issuedAt / 1000)}:f>\n**Status:** ${status}\n` +
-      `**Evidence:** ${warning.evidenceUrl ? `[View](${warning.evidenceUrl})` : 'No evidence provided.'}` +
+      `**Date:** <t:${Math.floor(warning.issuedAt / 1000)}:f>\n**Status:** ${status}` +
       (warning.punishmentType && warning.punishmentType !== 'none'
         ? `\n**Punishment:** ${warning.punishmentType}${warning.punishmentReversed ? ' (reversed)' : ''}`
         : '')
     )
     .setTimestamp();
+
+  applyEvidenceToEmbed(embed, warning); // inlines the image directly if it's an image, per spec
 
   const buttons = [
     new ButtonBuilder().setCustomId(`warnhist_edit_${targetUserId}_${warning.id}`).setLabel('Edit Warning').setStyle(ButtonStyle.Primary),
