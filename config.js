@@ -124,10 +124,14 @@ module.exports = {
     // new warning is issued. Counts not listed here (1st, 3rd, 5th, 7th,
     // 9th) get no automatic punishment.
     punishments: {
-      2: { type: 'timeout', ms: 2 * 60 * 60 * 1000 },
-      4: { type: 'timeout', ms: 4 * 60 * 60 * 1000 },
-      6: { type: 'timeout', ms: 6 * 60 * 60 * 1000 },
-      8: { type: 'jail', ms: 24 * 60 * 60 * 1000 },
+      // NOTE: switched from 'timeout' to 'jail' per request — the timeout
+      // code path is still fully intact in warnManager.js (unused for now),
+      // so flipping any of these back to { type: 'timeout', ms: ... } works
+      // immediately if needed later.
+      2: { type: 'jail', ms: 2 * 60 * 60 * 1000 },
+      4: { type: 'jail', ms: 4 * 60 * 60 * 1000 },
+      6: { type: 'jail', ms: 6 * 60 * 60 * 1000 },
+      8: { type: 'jail', ms: 24 * 60 * 60 * 1000, resetXp: true },
       10: { type: 'ban', reason: '10th Warn Reached' },
     },
     // Bot that owns a separate XP/level system — the 8th-warning punishment
