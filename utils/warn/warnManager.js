@@ -83,6 +83,8 @@ function applyEvidenceToEmbed(embed, warning) {
 }
 
 function formatMs(ms) {
+  const days = ms / 86400000;
+  if (Number.isInteger(days) && days >= 1) return `${days}-day`;
   const hours = ms / 3600000;
   return Number.isInteger(hours) ? `${hours}-hour` : `${(ms / 60000).toFixed(0)}-minute`;
 }
@@ -123,7 +125,7 @@ async function sendPunishmentDM(client, userId, punishmentType, punishment, acti
     description = `You have reached **${activeCount}** warnings, so you have received a **${formatMs(punishment.ms)}** timeout.`;
   } else if (punishmentType === 'jail') {
     title = '🔒 You have been jailed';
-    description = `You have reached **${activeCount}** warnings, so you have been **jailed for 1 day**.`;
+    description = `You have reached **${activeCount}** warnings, so you have been **jailed (${formatMs(punishment.ms)})**.`;
   } else if (punishmentType === 'ban') {
     title = '🔨 You have been banned';
     description = `You have reached **${activeCount}** warnings, so you have been **permanently banned** from the server.`;
@@ -158,17 +160,25 @@ async function applyPunishment(client, guild, member, punishment, warnCount, war
 
     if (punishment.type === 'jail') {
       const result = await jailUser(client, guild, member, client.user, reason, punishment.ms, null);
-      await sendLog(client, {
-        title: '⚠️ Manual Action Needed',
-        color: 0xF1C40F,
-        fields: [
-          { name: 'User', value: `<@${member.id}> (${member.id})`, inline: false },
-          { name: 'Action needed', value: `Run \`/remove-xp\` on <@${config.warn.xpBotId}> for this user — the warning system can't trigger another bot's command automatically.`, inline: false },
-        ],
-      });
-      if (!result.success) return { punishmentType: 'jail', punishmentAppliedAt: null, jailFailed: true };
+
+      // The XP-level reset via another bot only applies to the specific
+      // tier configured with resetXp:true (originally just the 8th
+      // warning) — not to every jail-type punishment now that 2nd/4th/6th
+      // also jail instead of timeout.
+      if (punishment.resetXp) {
+        await sendLog(client, {
+          title: '⚠️ Manual Action Needed',
+          color: 0xF1C40F,
+          fields: [
+            { name: 'User', value: `<@${member.id}> (${member.id})`, inline: false },
+            { name: 'Action needed', value: `Run \`/remove-xp\` on <@${config.warn.xpBotId}> for this user — the warning system can't trigger another bot's command automatically.`, inline: false },
+          ],
+        });
+      }
+
+      if (!result.success) return { punishmentType: 'jail', punishmentAppliedAt: null, punishmentMs: punishment.ms, jailFailed: true };
       const jailRecord = await getJailRecord(member.id);
-      return { punishmentType: 'jail', punishmentAppliedAt: jailRecord ? jailRecord.jailedAt : Date.now() };
+      return { punishmentType: 'jail', punishmentAppliedAt: jailRecord ? jailRecord.jailedAt : Date.now(), punishmentMs: punishment.ms };
     }
 
     if (punishment.type === 'ban') {
@@ -186,7 +196,7 @@ async function applyPunishment(client, guild, member, punishment, warnCount, war
 function describePunishment(applied, punishment) {
   if (!applied || applied.punishmentType === 'none') return applied?.error ? `⚠️ Failed to apply: ${applied.error}` : 'None';
   if (applied.punishmentType === 'timeout') return `Timeout (${Math.round(applied.punishmentMs / 3600000)}h)`;
-  if (applied.punishmentType === 'jail') return `Jailed 1 day${applied.jailFailed ? ' (⚠️ jail application failed)' : ''}`;
+  if (applied.punishmentType === 'jail') return `Jailed (${formatMs(applied.punishmentMs)})${applied.jailFailed ? ' (⚠️ jail application failed)' : ''}`;
   if (applied.punishmentType === 'ban') return `Permanent ban ("${punishment.reason}")`;
   return 'None';
 }
