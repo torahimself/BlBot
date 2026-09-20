@@ -3,7 +3,9 @@
 // outside /jail, or left over from before the bot tracked them). Tell
 // Claude "remove the scan jail role command" when done and this whole file
 // can be deleted safely — it doesn't touch any other part of the bot.
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, PermissionFlagsBits } = require('discord.js');
 const { getAllJailRecords } = require('../../utils/jail/jailManager.js');
 const config = require('../../config.js');
 
@@ -36,34 +38,32 @@ module.exports = {
             return interaction.editReply(`✅ Scanned **${roleHolders.size}** member(s) with <@&${role.id}> — all of them are properly tracked in the bot's jail system.`);
         }
 
+        // A previous version tried to list every user as embed fields, but
+        // Discord embeds have a hard 6000-character TOTAL size cap across
+        // title+description+all fields combined (separate from the
+        // per-field 1024 cap), and a large untracked list blew past it.
+        // A text file has no such limit, so use that instead — reliable
+        // regardless of how many users are found.
+        const lines = untracked.map(m => `${m.user.tag} — ${m.id} — <@${m.id}>`);
+        const fileContent = lines.join('\n');
+
+        const tmpPath = path.join('/tmp', `untracked-jail-role-${Date.now()}.txt`);
+        fs.writeFileSync(tmpPath, fileContent, 'utf8');
+
         const embed = new EmbedBuilder()
             .setColor(0xE67E22)
             .setTitle('🔎 Untracked Jail Role Holders')
             .setDescription(
                 `Scanned **${roleHolders.size}** member(s) with <@&${role.id}>.\n` +
-                `**${untracked.size}** of them have the role but are **not** in the bot's jailed_users records:`
+                `**${untracked.size}** of them have the role but are **not** in the bot's jailed_users records — full list attached below.`
             )
             .setTimestamp();
 
-        const lines = untracked.map(m => `<@${m.id}> — \`${m.id}\``);
-        // Discord embed field values cap at 1024 chars — chunk if needed.
-        let chunk = [];
-        let chunkLen = 0;
-        let fieldIndex = 1;
-        for (const line of lines) {
-            if (chunkLen + line.length + 1 > 1000) {
-                embed.addFields({ name: `Untracked (${fieldIndex})`, value: chunk.join('\n'), inline: false });
-                chunk = [];
-                chunkLen = 0;
-                fieldIndex++;
-            }
-            chunk.push(line);
-            chunkLen += line.length + 1;
-        }
-        if (chunk.length) {
-            embed.addFields({ name: `Untracked (${fieldIndex})`, value: chunk.join('\n'), inline: false });
-        }
+        await interaction.editReply({
+            embeds: [embed],
+            files: [new AttachmentBuilder(tmpPath, { name: 'untracked_jail_role_holders.txt' })],
+        });
 
-        await interaction.editReply({ embeds: [embed] });
+        fs.unlink(tmpPath, () => {}); // best-effort cleanup, don't block the response on it
     }
 };
