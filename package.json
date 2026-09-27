@@ -4,7 +4,7 @@
   "description": "Combined channel rotator and attachment counter bot with economy system",
   "main": "index.js",
   "scripts": {
-    "start": "(python3 -m pip install --upgrade yt-dlp --user && echo '✅ yt-dlp install/upgrade OK') || echo '❌ yt-dlp install/upgrade FAILED — Instagram/TikTok downloads will not work until this is fixed'; NODE_PATH=./vendor node index.js",
+    "start": "(python3 -m pip install --upgrade yt-dlp --user --break-system-packages && echo '✅ yt-dlp install/upgrade OK') || echo '❌ yt-dlp install/upgrade FAILED — Instagram/TikTok downloads will not work until this is fixed'; NODE_PATH=./vendor node index.js",
     "dev": "NODE_PATH=./vendor nodemon index.js"
   },
   "dependencies": {
