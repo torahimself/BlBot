@@ -4,16 +4,16 @@
   "description": "Combined channel rotator and attachment counter bot with economy system",
   "main": "index.js",
   "scripts": {
-    "start": "python3 -m pip install --upgrade yt-dlp --quiet --user; NODE_PATH=./vendor node index.js",
+    "start": "(python3 -m pip install --upgrade yt-dlp --user && echo '✅ yt-dlp install/upgrade OK') || echo '❌ yt-dlp install/upgrade FAILED — Instagram/TikTok downloads will not work until this is fixed'; NODE_PATH=./vendor node index.js",
     "dev": "NODE_PATH=./vendor nodemon index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
+    "@the-convocation/twitter-scraper": "^0.22.3",
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "node-cron": "^3.0.3",
-    "sqlite3": "^5.1.6",
-    "dotenv": "^16.4.5",
-    "@the-convocation/twitter-scraper": "^0.22.3"
+    "sqlite3": "^5.1.6"
   },
   "keywords": [
     "discord",
