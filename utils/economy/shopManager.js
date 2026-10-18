@@ -28,6 +28,29 @@ function updateBalance(userId, amount) {
   });
 }
 
+// Atomically takes `amount` coins from a user — but ONLY if they can afford
+// it right now. Resolves true on success, false if the balance was too low.
+// This is a single SQL statement, so two commands fired at the same instant
+// can never both spend the same coins (the old "check balance, then deduct"
+// pattern could, and left balances negative).
+function spendCoins(userId, amount) {
+  return new Promise((resolve, reject) => {
+    if (!Number.isInteger(amount) || amount < 0) return resolve(false);
+    if (amount === 0) return resolve(true);
+    db.run(
+      'UPDATE users SET balance = balance - ? WHERE userId = ? AND balance >= ?',
+      [amount, userId, amount],
+      function (err) { if (err) reject(err); else resolve(this.changes > 0); }
+    );
+  });
+}
+
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) { if (err) reject(err); else resolve(this); });
+  });
+}
+
 async function purchaseRole(interaction) {
   const userId = interaction.user.id;
   const balance = await getBalance(userId);
@@ -43,11 +66,11 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
   if (!guild) return { success: false, message: 'Guild not found' };
 
   if (!isAdmin) {
-    const balance = await getBalance(userId);
-    if (balance < ROLE_PRICE) {
+    const paid = await spendCoins(userId, ROLE_PRICE);
+    if (!paid) {
+      const balance = await getBalance(userId);
       return { success: false, message: `You need ${ROLE_PRICE} coins. You have ${balance}.` };
     }
-    await updateBalance(userId, -ROLE_PRICE);
   }
 
   let roleColor = 0x00ff00;
@@ -83,22 +106,34 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
   const now = Date.now();
   const expiration = now + ROLE_DURATION_MS;
 
-  db.run(
-    'INSERT INTO purchased_roles (roleId, ownerId, purchaseDate, expirationDate) VALUES (?, ?, ?, ?)',
-    [role.id, userId, now, expiration],
-    (err) => {
-      if (err) {
-        console.error(err);
-        role.delete().catch(console.error);
-        if (!isAdmin) updateBalance(userId, ROLE_PRICE);
-        return { success: false, message: 'Database error. Coins refunded.' };
-      }
-    }
-  );
+  // The insert is awaited so a database failure really does stop here. (It
+  // used to be fire-and-forget: the "Database error" return inside the
+  // callback never reached the caller, so a failed insert still reported
+  // success while the role was deleted and the coins refunded.)
+  try {
+    await dbRun(
+      'INSERT INTO purchased_roles (roleId, ownerId, purchaseDate, expirationDate) VALUES (?, ?, ?, ?)',
+      [role.id, userId, now, expiration]
+    );
+  } catch (err) {
+    console.error('Role DB insert error:', err);
+    await role.delete().catch(console.error);
+    if (!isAdmin) await updateBalance(userId, ROLE_PRICE);
+    return { success: false, message: 'Database error. Coins refunded.' };
+  }
 
-  await interaction.member.roles.add(role);
-  db.run('INSERT INTO role_members (roleId, userId, addedBy, addedDate) VALUES (?, ?, ?, ?)',
-    [role.id, userId, userId, now]);
+  try {
+    await interaction.member.roles.add(role);
+  } catch (err) {
+    console.error('Could not give the new role to its buyer:', err);
+    await dbRun('DELETE FROM purchased_roles WHERE roleId = ?', [role.id]).catch(console.error);
+    await role.delete().catch(console.error);
+    if (!isAdmin) await updateBalance(userId, ROLE_PRICE);
+    return { success: false, message: 'Could not assign the role to you. Coins refunded.' };
+  }
+
+  await dbRun('INSERT INTO role_members (roleId, userId, addedBy, addedDate) VALUES (?, ?, ?, ?)',
+    [role.id, userId, userId, now]).catch(console.error);
 
   return { success: true, role: role, message: `Role ${role.name} created!` };
 }
@@ -129,15 +164,22 @@ async function addMemberToRole(interaction, roleId, targetUser) {
     return { success: false, message: 'User already has this role.' };
   }
 
-  const balance = await getBalance(ownerId);
-  if (balance < ADD_MEMBER_PRICE) {
+  const paid = await spendCoins(ownerId, ADD_MEMBER_PRICE);
+  if (!paid) {
     return { success: false, message: `You need ${ADD_MEMBER_PRICE} coins to add a member.` };
   }
 
-  await updateBalance(ownerId, -ADD_MEMBER_PRICE);
-  await targetMember.roles.add(role);
-  db.run('INSERT INTO role_members (roleId, userId, addedBy, addedDate) VALUES (?, ?, ?, ?)',
-    [roleId, targetUser.id, ownerId, Date.now()]);
+  try {
+    await targetMember.roles.add(role);
+  } catch (err) {
+    // Typically a role-hierarchy / permissions problem. Don't keep the coins.
+    console.error('addMemberToRole: roles.add failed:', err.message);
+    await updateBalance(ownerId, ADD_MEMBER_PRICE);
+    return { success: false, message: 'Could not add that user to the role (check my role permissions). You were not charged.' };
+  }
+
+  await dbRun('INSERT INTO role_members (roleId, userId, addedBy, addedDate) VALUES (?, ?, ?, ?)',
+    [roleId, targetUser.id, ownerId, Date.now()]).catch(console.error);
 
   return { success: true, message: `Added ${targetUser.tag} to role.` };
 }
@@ -200,14 +242,27 @@ async function editRole(interaction, roleId, newName, newIconAttachment, newColo
 }
 
 async function extendRole(roleId, ownerId) {
-  const balance = await getBalance(ownerId);
-  if (balance < ROLE_PRICE) {
+  const paid = await spendCoins(ownerId, ROLE_PRICE);
+  if (!paid) {
     return { success: false, message: `You need ${ROLE_PRICE} coins to extend.` };
   }
-  await updateBalance(ownerId, -ROLE_PRICE);
   const newExpiration = Date.now() + ROLE_DURATION_MS;
-  db.run('UPDATE purchased_roles SET expirationDate = ?, extendedCount = extendedCount + 1 WHERE roleId = ?',
-    [newExpiration, roleId]);
+  try {
+    // expiryWarned goes back to 0 so the owner gets a fresh warning before the NEXT expiry.
+    // Only extend while the role is still inside the 24h window. Two /extendrole
+    // commands fired together both pass the command's own checks; the second
+    // one finds the role already extended here (changes === 0) and is refunded.
+    const res = await dbRun('UPDATE purchased_roles SET expirationDate = ?, extendedCount = extendedCount + 1, expiryWarned = 0 WHERE roleId = ? AND expirationDate <= ?',
+      [newExpiration, roleId, Date.now() + EXPIRATION_WARNING_MS]);
+    if (res.changes === 0) {
+      await updateBalance(ownerId, ROLE_PRICE);
+      return { success: false, message: 'Your role was just extended already. You were not charged again.' };
+    }
+  } catch (err) {
+    console.error('extendRole DB update failed:', err);
+    await updateBalance(ownerId, ROLE_PRICE);
+    return { success: false, message: 'Database error. You were not charged.' };
+  }
   return { success: true, message: `Role extended for 30 days.` };
 }
 
@@ -237,7 +292,7 @@ function getRoleMemberCount(roleId) {
 
 async function checkExpiredRoles(client, logChannelId) {
   const now = Date.now();
-  db.all('SELECT roleId, ownerId, expirationDate FROM purchased_roles', async (err, rows) => {
+  db.all('SELECT roleId, ownerId, expirationDate, expiryWarned FROM purchased_roles', async (err, rows) => {
     if (err) return console.error(err);
     for (const row of rows) {
       const timeLeft = row.expirationDate - now;
@@ -259,7 +314,11 @@ async function checkExpiredRoles(client, logChannelId) {
           if (logChannel) logChannel.send(`Expired role <@&${row.roleId}> owned by <@${row.ownerId}> has been deleted.`);
         }
         console.log(`🗑️ Expired role ${row.roleId} deleted.`);
-      } else if (timeLeft <= EXPIRATION_WARNING_MS && timeLeft > 0) {
+      } else if (timeLeft <= EXPIRATION_WARNING_MS && timeLeft > 0 && !row.expiryWarned) {
+        // Mark as warned first so this check (every 6h, and on every
+        // restart) sends the warning ONCE per expiry window instead of
+        // DMing the owner again and again.
+        db.run('UPDATE purchased_roles SET expiryWarned = 1 WHERE roleId = ?', [row.roleId]);
         const owner = await client.users.fetch(row.ownerId).catch(() => null);
         if (owner) {
           // NOTE: buttons sent via DM are unreliable — Discord doesn't
@@ -278,8 +337,8 @@ async function checkExpiredRoles(client, logChannelId) {
 
 module.exports = {
   purchaseRole, createCustomRole,
-  getBalance, updateBalance,
+  getBalance, updateBalance, spendCoins,
   addMemberToRole, removeMemberFromRole,
-  editRole, extendRole, checkExpiredRoles,
+  editRole, extendRole, checkExpiredRoles, getActiveRoleForOwner,
   ROLE_PRICE, ADD_MEMBER_PRICE, ROLE_DURATION_MS
 };
