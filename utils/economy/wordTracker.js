@@ -8,6 +8,33 @@ function getRandomReward() {
     return Math.floor(Math.random() * (MAX_REWARD - MIN_REWARD + 1)) + MIN_REWARD;
 }
 
+// One message at a time PER USER. Without this, two quick messages from the
+// same person both read the same word count, and the later write could also
+// overwrite coins won elsewhere (a game payout, /work) with a stale balance.
+const queues = new Map();
+
+function runExclusive(key, fn) {
+    const prev = queues.get(key) || Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    queues.set(key, next);
+    next
+        .catch(() => {})
+        .then(() => { if (queues.get(key) === next) queues.delete(key); });
+    return next;
+}
+
+function dbGet(sql, params) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
+    });
+}
+
+function dbRun(sql, params) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, (err) => (err ? reject(err) : resolve()));
+    });
+}
+
 async function processMessage(message) {
     if (message.author.bot) return;
     if (message.content.startsWith('/')) return;
@@ -17,57 +44,31 @@ async function processMessage(message) {
 
     const userId = message.author.id;
 
-    return new Promise((resolve) => {
-        db.get('SELECT wordCount, balance, lastWorkTime FROM users WHERE userId = ?', [userId], (err, row) => {
-            if (err) {
-                console.error(err);
-                return resolve();
-            }
-            let wordCount = row ? row.wordCount : 0;
-            let balance = row ? row.balance : 0;
-            let lastWorkTime = row ? row.lastWorkTime : 0;
-            let totalReward = 0;
+    return runExclusive(userId, async () => {
+        try {
+            const row = await dbGet('SELECT wordCount FROM users WHERE userId = ?', [userId]);
 
-            wordCount += words;
+            let wordCount = (row ? row.wordCount : 0) + words;
+            let totalReward = 0;
             while (wordCount >= WORD_THRESHOLD) {
-                const reward = getRandomReward();
-                totalReward += reward;
+                totalReward += getRandomReward();
                 wordCount -= WORD_THRESHOLD;
             }
 
-            if (totalReward > 0) {
-                balance += totalReward;
-                // Update balance, wordCount, but preserve lastWorkTime
-                db.run(
-                    `INSERT INTO users (userId, balance, wordCount, lastWorkTime) 
-                     VALUES (?, ?, ?, ?)
-                     ON CONFLICT(userId) DO UPDATE SET 
-                     balance = excluded.balance,
-                     wordCount = excluded.wordCount,
-                     lastWorkTime = COALESCE(lastWorkTime, excluded.lastWorkTime)`,
-                    [userId, balance, wordCount, lastWorkTime],
-                    (err) => {
-                        if (err) console.error(err);
-                        resolve();
-                    }
-                );
-            } else {
-                // Just update wordCount, preserve others
-                db.run(
-                    `INSERT INTO users (userId, wordCount, balance, lastWorkTime) 
-                     VALUES (?, ?, ?, ?)
-                     ON CONFLICT(userId) DO UPDATE SET 
-                     wordCount = excluded.wordCount,
-                     balance = COALESCE(balance, excluded.balance),
-                     lastWorkTime = COALESCE(lastWorkTime, excluded.lastWorkTime)`,
-                    [userId, wordCount, balance, lastWorkTime],
-                    (err) => {
-                        if (err) console.error(err);
-                        resolve();
-                    }
-                );
-            }
-        });
+            // The coin reward is ADDED to whatever the balance is right now
+            // (never overwritten with a value read earlier), and the other
+            // columns (lastWorkTime, ...) are left untouched.
+            await dbRun(
+                `INSERT INTO users (userId, balance, wordCount)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(userId) DO UPDATE SET
+                 wordCount = excluded.wordCount,
+                 balance = balance + excluded.balance`,
+                [userId, totalReward, wordCount]
+            );
+        } catch (err) {
+            console.error('[WordTracker]', err);
+        }
     });
 }
 
