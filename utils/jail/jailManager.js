@@ -84,10 +84,15 @@ async function sendLog(client, { title, color, fields, evidenceAttachment }) {
   }
 
   const { EmbedBuilder } = require('discord.js');
+  // Discord rejects embed field values over 1024 characters.
+  const safeFields = fields.map(f => {
+    const v = String(f.value == null ? '' : f.value);
+    return { ...f, value: v.length > 1000 ? v.slice(0, 999) + '…' : v };
+  });
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
-    .addFields(fields)
+    .addFields(safeFields)
     .setTimestamp();
 
   const payload = { embeds: [embed] };
@@ -186,6 +191,7 @@ async function unjailUser(client, guild, userId, unjailedBy, reason, evidenceAtt
   } catch { /* ignore malformed data, restore with no roles rather than crash */ }
 
   const member = guild.members.cache.get(userId) || await guild.members.fetch(userId).catch(() => null);
+  let rolesRestored = false;
 
   if (member) {
     // Only restore roles that still exist in the guild (a role may have
@@ -199,6 +205,7 @@ async function unjailUser(client, guild, userId, unjailedBy, reason, evidenceAtt
         [...new Set([...validRoles, ...managedRoleIds])],
         `Unjailed by ${isAuto ? 'System (auto)' : unjailedBy.tag}: ${reason}`
       );
+      rolesRestored = true;
     } catch (err) {
       console.error(`[Jail] Failed to restore roles for ${userId}:`, err.message);
     }
@@ -214,12 +221,12 @@ async function unjailUser(client, guild, userId, unjailedBy, reason, evidenceAtt
       { name: 'Moderator', value: isAuto ? 'System (automatic)' : `<@${unjailedBy.id}> (${unjailedBy.id})`, inline: false },
       { name: 'Unjailed User', value: `<@${userId}> (${userId})`, inline: false },
       { name: 'Reason', value: reason, inline: false },
-      { name: 'Roles Restored', value: member ? `${previousRoles.length} role(s)` : 'User not in server — nothing to restore', inline: false },
+      { name: 'Roles Restored', value: !member ? 'User not in server — nothing to restore' : (rolesRestored ? `${previousRoles.length} role(s)` : '⚠️ FAILED — roles were NOT restored; fix this member manually (check my role position)'), inline: false },
     ],
     evidenceAttachment,
   });
 
-  return { success: true };
+  return { success: true, rolesRestored };
 }
 
 // ── Rejoin handling ──────────────────────────────────────────────────────────
