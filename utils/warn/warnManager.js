@@ -42,6 +42,13 @@ function isWarningActive(warning) {
   return warning.removed === 0 && warning.expiresAt > Date.now();
 }
 
+// Discord rejects embed field values over 1024 characters (and the embed
+// builder throws), so anything user-supplied is clipped before it goes in.
+function clip(text, max = 1000) {
+  const s = String(text == null ? '' : text);
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
 // ── Logging ───────────────────────────────────────────────────────────────────
 async function sendLog(client, { title, color, fields, imageUrl }) {
   const channel = client.channels.cache.get(config.warn.logChannelId);
@@ -49,7 +56,8 @@ async function sendLog(client, { title, color, fields, imageUrl }) {
     console.error(`[Warn] Log channel not found: ${config.warn.logChannelId}`);
     return;
   }
-  const embed = new EmbedBuilder().setColor(color).setTitle(title).addFields(fields).setTimestamp();
+  const safeFields = fields.map(f => ({ ...f, value: clip(f.value) }));
+  const embed = new EmbedBuilder().setColor(color).setTitle(title).addFields(safeFields).setTimestamp();
   if (imageUrl) embed.setImage(imageUrl);
   await channel.send({ embeds: [embed] }).catch(err => console.error('[Warn] Failed to send log:', err.message));
 }
@@ -108,7 +116,7 @@ async function sendWarningDM(client, member, warning, activeCount) {
     .setColor(0xE67E22)
     .setTitle('⚠️ You have received a warning')
     .addFields(
-      { name: 'Reason', value: warning.reason, inline: false },
+      { name: 'Reason', value: clip(warning.reason), inline: false },
       { name: 'Warning count', value: `${activeCount}`, inline: true },
       { name: 'Date/time', value: `<t:${Math.floor(warning.issuedAt / 1000)}:f>`, inline: true },
     )
@@ -140,7 +148,7 @@ async function sendPunishmentDM(client, userId, punishmentType, punishment, acti
     .addFields(
       { name: 'Punishment type', value: punishmentType, inline: true },
       { name: 'Trigger', value: `Reaching ${activeCount} active warnings`, inline: true },
-      { name: 'Underlying warning reason', value: warnReason, inline: false },
+      { name: 'Underlying warning reason', value: clip(warnReason), inline: false },
     )
     .setTimestamp();
   await dmUser(client, userId, embed);
@@ -220,6 +228,19 @@ async function addWarning(client, guild, member, issuedBy, reason, evidence = nu
   const activeCount = activeAfter.length;
 
   const punishment = config.warn.punishments[activeCount] || null;
+
+  // A banned user shares no server with the bot any more, so Discord refuses
+  // to deliver DMs to them. For a ban the DMs therefore go out BEFORE the ban
+  // is applied — but only when the ban can actually succeed (bannable), so
+  // nobody is told they were banned when the ban then fails.
+  let dmsSentBeforeBan = false;
+  if (punishment && punishment.type === 'ban' && member.bannable) {
+    const preBanRow = await getWarningById(insertResult.lastID);
+    await sendWarningDM(client, member, preBanRow, activeCount);
+    await sendPunishmentDM(client, member.id, 'ban', punishment, activeCount, reason);
+    dmsSentBeforeBan = true;
+  }
+
   const applied = await applyPunishment(client, guild, member, punishment, activeCount, reason);
 
   await dbRun(
@@ -230,9 +251,11 @@ async function addWarning(client, guild, member, issuedBy, reason, evidence = nu
   const warningRow = await getWarningById(insertResult.lastID);
 
   // DM the WARNED USER (never the staff member who issued it).
-  await sendWarningDM(client, member, warningRow, activeCount);
-  if (punishment && applied.punishmentType !== 'none' && !applied.error) {
-    await sendPunishmentDM(client, member.id, applied.punishmentType, punishment, activeCount, reason);
+  if (!dmsSentBeforeBan) {
+    await sendWarningDM(client, member, warningRow, activeCount);
+    if (punishment && applied.punishmentType !== 'none' && !applied.error) {
+      await sendPunishmentDM(client, member.id, applied.punishmentType, punishment, activeCount, reason);
+    }
   }
 
   const isImageEvidence = evidence && evidence.contentType && evidence.contentType.startsWith('image/');
