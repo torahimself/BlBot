@@ -184,7 +184,7 @@ async function downloadInstagramReel(url, tmpFile) {
 
 // ── Download video and return Discord payload ─────────────────────────────────
 async function buildVideoPost(url, authorId, platform) {
-  const tmpFile = path.join(os.tmpdir(), `blbot_${Date.now()}.mp4`);
+  const tmpFile = path.join(os.tmpdir(), `blbot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.mp4`);
 
   try {
     if (platform === 'tiktok') {
@@ -248,8 +248,9 @@ async function handleLinkEmbed(message) {
   }
 
   for (const det of detections) {
+    let payload = null;
+    let sent = false;
     try {
-      let payload;
       if (det.platform === 'twitter') {
         payload = buildTwitterPost(det.url, message.author.id);
       } else {
@@ -258,11 +259,24 @@ async function handleLinkEmbed(message) {
       if (payload) {
         const { _cleanup, ...sendPayload } = payload;
         await message.channel.send(sendPayload);
-        if (_cleanup) _cleanup();
+        sent = true;
         console.log(`[LinkEmbed] ✅ ${det.platform} sent for ${message.author.username}`);
       }
     } catch (err) {
       console.error(`[LinkEmbed] ❌ ${det.platform} failed:`, err.message);
+    } finally {
+      // Always remove the temp video, even if posting it failed.
+      if (payload && payload._cleanup) payload._cleanup();
+    }
+
+    // The original message was already deleted above. If the embed could not
+    // be produced (download failed, file too large, cookies expired...), put
+    // the link back so it doesn't silently vanish.
+    if (!sent) {
+      await message.channel.send({
+        content: `<@${message.author.id}> ⚠️ Couldn't embed this ${det.platform} link — here it is as posted:\n${det.url}`,
+        allowedMentions: { users: [message.author.id] },
+      }).catch(err => console.error('[LinkEmbed] Could not repost original link:', err.message));
     }
   }
 
