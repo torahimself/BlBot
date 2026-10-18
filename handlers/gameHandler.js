@@ -1,7 +1,59 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const { getDuel, deleteDuel } = require('../utils/economy/duelManager.js');
-const { getGame, deleteGame, doRRTurn } = require('../utils/economy/gameManager.js');
-const { getBalance, updateBalance } = require('../utils/economy/shopManager.js');
+const { getDuel, deleteDuel, setDuelTimeout } = require('../utils/economy/duelManager.js');
+const { getGame, deleteGame, doRRTurn, payWinner, refundGame, MAX_PLAYERS } = require('../utils/economy/gameManager.js');
+const { getBalance, updateBalance, spendCoins } = require('../utils/economy/shopManager.js');
+
+// Takes `amount` coins from BOTH duel players atomically (each deduction only
+// succeeds if that player can afford it right now). If either can't pay, any
+// coins already taken are returned and `{ ok: false, brokeId }` says who.
+async function takeDuelStakes(duel) {
+  if (!(await spendCoins(duel.initiatorId, duel.amount))) {
+    return { ok: false, brokeId: duel.initiatorId };
+  }
+  if (!(await spendCoins(duel.targetId, duel.amount))) {
+    await updateBalance(duel.initiatorId, duel.amount);
+    return { ok: false, brokeId: duel.targetId };
+  }
+  return { ok: true };
+}
+
+async function cancelDuelNoFunds(interaction, duel, brokeId, label) {
+  deleteDuel(duel.id);
+  const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
+  if (msg) {
+    await msg.edit({ content: `❌ ${label} cancelled — <@${brokeId}> no longer has enough coins. Nobody was charged.`, components: [] }).catch(() => {});
+  }
+  return interaction.reply({ content: `❌ ${label} cancelled — <@${brokeId}> no longer has enough coins.`, flags: 64 });
+}
+
+// Shared "Join Game" logic for the lobby games (Last Man Standing, Russian
+// Roulette, Hot Potato). The stake is taken atomically FIRST; everything is
+// then re-checked, because the lobby can change while the payment is in
+// flight (double-click, lobby closing, lobby filling up). If the join can't
+// go ahead after all, the stake is handed straight back.
+async function handleLobbyJoin(interaction, gameId, title) {
+  const game = getGame(gameId);
+  const uid = interaction.user.id;
+
+  if (!game || game.status !== 'lobby') return interaction.reply({ content: '❌ This game is no longer accepting players.', flags: 64 });
+  if (game.players.includes(uid)) return interaction.reply({ content: '❌ You already joined.', flags: 64 });
+  if (game.players.length >= MAX_PLAYERS) return interaction.reply({ content: '❌ The lobby is full.', flags: 64 });
+
+  const paid = await spendCoins(uid, game.betAmount);
+  if (!paid) return interaction.reply({ content: `❌ You need **${game.betAmount}** coins to join.`, flags: 64 });
+
+  if (!getGame(game.id) || game.status !== 'lobby' || game.players.includes(uid) || game.players.length >= MAX_PLAYERS) {
+    await updateBalance(uid, game.betAmount);
+    return interaction.reply({ content: '❌ Could not join (the lobby closed, filled up, or you were already in). You were not charged.', flags: 64 });
+  }
+  game.players.push(uid);
+
+  const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
+  const playerList = game.players.map(p => `<@${p}>`).join(', ');
+  if (msg) await msg.edit({ content: `${title} — Bet: **${game.betAmount}** coins/player\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
+
+  return interaction.reply({ content: '✅ You joined!', flags: 64 });
+}
 
 // ─── Blackjack helpers ────────────────────────────────────────────────────────
 
@@ -52,6 +104,12 @@ function buildBJRows(duel) {
 }
 
 async function resolveBJ(duel, channel) {
+  // Resolve exactly once, and remove the duel BEFORE paying out so its
+  // expiry timer can never fire a refund on top of the payout.
+  if (duel.resolving) return;
+  duel.resolving = true;
+  deleteDuel(duel.id);
+
   const iId = duel.initiatorId;
   const tId = duel.targetId;
   const iVal = handValue(duel.hands[iId]);
@@ -95,17 +153,18 @@ async function resolveBJ(duel, channel) {
   const msg = await channel.messages.fetch(duel.messageId).catch(() => null);
   if (msg) await msg.edit({ content: finalContent, components: [] });
   else await channel.send(finalContent);
-  deleteDuel(duel.id);
 }
 
 // ─── Hot Potato helpers ───────────────────────────────────────────────────────
 
 async function startHotPotato(game, client) {
   const channel = client.channels.cache.get(game.channelId);
-  if (!channel) return deleteGame(game.id);
+  if (!channel) return refundGame(game, client);
 
   game.status = 'active';
   game.exploded = false;
+  // Remember everyone who paid in (the first round only) so a crash can refund them all.
+  if (!game.allPlayers.length) game.allPlayers = [...game.players];
   game.potatoHolder = game.players[Math.floor(Math.random() * game.players.length)];
 
   const explodeIn = Math.floor(Math.random() * 25000) + 20000;
@@ -124,42 +183,160 @@ async function startHotPotato(game, client) {
   }
 
   game.potatoTimeout = setTimeout(async () => {
-    const g = getGame(game.id);
-    if (!g || g.exploded) return;
+    try {
+      const g = getGame(game.id);
+      if (!g || g.exploded) return;
 
-    g.exploded = true;
+      g.exploded = true;
 
-    const loserId = g.potatoHolder;
-    g.players = g.players.filter(p => p !== loserId);
+      const loserId = g.potatoHolder;
+      g.players = g.players.filter(p => p !== loserId);
 
-    const ch = client.channels.cache.get(g.channelId);
-    if (!ch) return deleteGame(g.id);
+      const ch = client.channels.cache.get(g.channelId);
+      if (!ch) return refundGame(g, client);
 
-    if (g.players.length === 1) {
-      const winnerId = g.players[0];
-      await updateBalance(winnerId, g._totalPot);
-      const finalMsg = await ch.messages.fetch(g.messageId).catch(() => null);
-      if (finalMsg) {
-        await finalMsg.edit({
-          content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\n\n🏆 <@${winnerId}> is the last one standing and wins **${g._totalPot}** coins!`,
+      if (g.players.length === 1) {
+        const winnerId = g.players[0];
+        await payWinner(g, winnerId, g._totalPot);
+        const finalMsg = await ch.messages.fetch(g.messageId).catch(() => null);
+        if (finalMsg) {
+          await finalMsg.edit({
+            content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\n\n🏆 <@${winnerId}> is the last one standing and wins **${g._totalPot}** coins!`,
+            components: [],
+          });
+        }
+        deleteGame(g.id);
+        return;
+      }
+
+      const elimMsg = await ch.messages.fetch(g.messageId).catch(() => null);
+      if (elimMsg) {
+        await elimMsg.edit({
+          content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\nRemaining: ${g.players.map(p => `<@${p}>`).join(', ')}\n\n🥔 Picking a new holder...`,
           components: [],
         });
       }
-      deleteGame(g.id);
-      return;
-    }
 
-    const elimMsg = await ch.messages.fetch(g.messageId).catch(() => null);
-    if (elimMsg) {
-      await elimMsg.edit({
-        content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\nRemaining: ${g.players.map(p => `<@${p}>`).join(', ')}\n\n🥔 Picking a new holder...`,
-        components: [],
-      });
+      await new Promise(r => setTimeout(r, 2500));
+      await startHotPotato(g, client);
+    } catch (err) {
+      // Without this, a failed message edit left the game stuck forever with
+      // everyone's stake gone and everyone blocked by "already in a game".
+      console.error('[Games] Hot Potato crashed:', err);
+      await refundGame(game, client, 'Hot Potato hit an error');
     }
-
-    await new Promise(r => setTimeout(r, 2500));
-    await startHotPotato(g, client);
   }, explodeIn);
+}
+
+// ─── Russian Roulette: resolve one shot ───────────────────────────────────────
+// Called by the button handler once the click has been validated.
+async function handleRRShot(interaction, game, targetId) {
+  // Clear AFK timeout since shooter acted
+  if (game.rrTurnTimeout) { clearTimeout(game.rrTurnTimeout); game.rrTurnTimeout = null; }
+
+  const pot = game.betAmount * game.players.length;
+  const isSelf = targetId === game.rrShooter;
+  const shot = Math.random() < (game.rrBullets / 6);
+
+  if (shot) {
+    // 💥 HIT — target is eliminated
+    game.rrActive = game.rrActive.filter(p => p !== targetId);
+
+    if (game.rrActive.length === 1) {
+      const winnerId = game.rrActive[0];
+      await payWinner(game, winnerId, pot);
+
+      const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
+      const finalContent = [
+        `🔫 **Russian Roulette — Game Over!**`,
+        ``,
+        `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — and it connected!`,
+        ``,
+        `🏆 <@${winnerId}> is the last survivor and wins **${pot}** coins!`,
+      ].join('\n');
+      if (msg) await msg.edit({ content: finalContent, components: [] });
+      deleteGame(game.id);
+      return interaction.reply({ content: isSelf ? '💀 You shot yourself — eliminated!' : `💥 You eliminated <@${targetId}>! But you're alone now, game over.`, flags: 64 });
+    }
+
+    // New random turn — reset bullets
+    await doRRTurn(game, interaction.client, `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — eliminated!`);
+    return interaction.reply({ content: isSelf ? '💀 You shot yourself and were eliminated!' : `💥 <@${targetId}> was eliminated!`, flags: 64 });
+  }
+
+  // *click* — miss
+  if (!isSelf) {
+    // Shooting someone else and missing → new random turn (reset bullets)
+    await doRRTurn(game, interaction.client, `*click* — <@${game.rrShooter}> shot at <@${targetId}> and missed!`);
+    return interaction.reply({ content: `*click* — empty! <@${targetId}> survived.`, flags: 64 });
+  }
+
+  // Shooting yourself and surviving → increment bullets, keep same shooter
+  game.rrBullets = Math.min(game.rrBullets + 1, 5);
+  const guild = interaction.client.guilds.cache.get(game.guildId);
+  const bullets = game.rrBullets;
+
+  // Rebuild shoot buttons for same shooter
+  const buttons = [];
+  for (const pid of game.rrActive) {
+    let label = pid;
+    if (guild) {
+      try {
+        const member = await guild.members.fetch(pid);
+        label = (member.nickname || member.user.username).slice(0, 20);
+      } catch (_) {}
+    }
+    const isSelfBtn = pid === game.rrShooter;
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`rr_shoot_${game.id}_${pid}`)
+        .setLabel(isSelfBtn ? `🎯 ${label} (me)` : label)
+        .setStyle(isSelfBtn ? ButtonStyle.Danger : ButtonStyle.Secondary),
+    );
+  }
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
+  }
+
+  const survivors = game.rrActive.map(p => `<@${p}>`).join(', ');
+  const content = [
+    `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
+    `Survivors: ${survivors}`,
+    ``,
+    `*click* — <@${game.rrShooter}> shot themselves and survived! Chamber loaded: **${bullets}/6**`,
+    ``,
+    `<@${game.rrShooter}> — pick again! *(${15}s to decide)*`,
+  ].join('\n');
+
+  const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
+  if (msg) await msg.edit({ content, components: rows });
+
+  // Reset 15s AFK timer for same shooter
+  const client = interaction.client;
+  if (game.rrTurnTimeout) clearTimeout(game.rrTurnTimeout);
+  game.rrTurnTimeout = setTimeout(async () => {
+    try {
+      const g = getGame(game.id);
+      if (!g || g.status !== 'active' || g.rrShooter !== game.rrShooter) return;
+      const afkId = g.rrShooter;
+      g.rrActive = g.rrActive.filter(p => p !== afkId);
+      if (g.rrActive.length === 1) {
+        const winnerId = g.rrActive[0];
+        await payWinner(g, winnerId, pot);
+        const afkMsg = await interaction.channel.messages.fetch(g.messageId).catch(() => null);
+        if (afkMsg) await afkMsg.edit({ content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond and is eliminated!\n\n🏆 <@${winnerId}> wins **${pot}** coins!`, components: [] });
+        deleteGame(g.id);
+        return;
+      }
+      await doRRTurn(g, client, `⏱️ <@${afkId}> took too long and has been kicked!`);
+    } catch (err) {
+      console.error('[Games] Russian Roulette AFK handler crashed:', err);
+      await refundGame(game, client, 'Russian Roulette hit an error');
+    }
+  }, 15000);
+
+  return interaction.reply({ content: `😅 *click* — empty! You survived. Bullet count raised to **${bullets}/6**.`, flags: 64 });
 }
 
 // ─── Main button handler ──────────────────────────────────────────────────────
@@ -211,11 +388,15 @@ async function handleButton(interaction) {
 
     if (!duel) return interaction.reply({ content: '❌ This duel has expired.', flags: 64 });
     if (interaction.user.id !== duel.initiatorId) return interaction.reply({ content: '❌ Only the challenger picks the side.', flags: 64 });
+    // A second click while the first is still being processed must not flip (and pay out) again.
+    if (duel.resolving) return interaction.reply({ content: '⏳ Already flipping…', flags: 64 });
+    duel.resolving = true;
 
     duel.initiatorSide = isHeads ? 'Heads' : 'Tails';
 
-    await updateBalance(duel.initiatorId, -duel.amount);
-    await updateBalance(duel.targetId, -duel.amount);
+    // Both stakes are taken only if BOTH players can still afford it right now.
+    const stakes = await takeDuelStakes(duel);
+    if (!stakes.ok) return cancelDuelNoFunds(interaction, duel, stakes.brokeId, 'Coin flip');
 
     const flip = Math.random() < 0.5;
     const flipResult = flip ? 'Heads' : 'Tails';
@@ -223,8 +404,8 @@ async function handleButton(interaction) {
     const winnerId = initiatorWins ? duel.initiatorId : duel.targetId;
     const prize = duel.amount * 2;
 
-    await updateBalance(winnerId, prize);
     deleteDuel(duel.id);
+    await updateBalance(winnerId, prize);
 
     const result = [
       `🪙 <@${duel.initiatorId}> called **${duel.initiatorSide}** — the coin landed on **${flipResult}**!`,
@@ -289,20 +470,36 @@ async function handleButton(interaction) {
     if (interaction.user.id !== duel.targetId) return interaction.reply({ content: '❌ This duel is not for you.', flags: 64 });
 
     if (!isAccept) {
+      // Once Accept has been pressed the stakes are being taken — declining now
+      // would delete the duel out from under the payment and lose both stakes.
+      if (duel.started) return interaction.reply({ content: '⏳ This game already started.', flags: 64 });
       deleteDuel(duel.id);
       const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
       if (msg) await msg.edit({ content: `❌ <@${duel.targetId}> declined the blackjack duel.`, components: [] });
       return interaction.reply({ content: '✅ You declined.', flags: 64 });
     }
 
-    const targetBalance = await getBalance(duel.targetId);
-    if (duel.amount > targetBalance) {
-      deleteDuel(duel.id);
-      return interaction.reply({ content: '❌ You no longer have enough coins.', flags: 64 });
-    }
+    // A second click on Accept must not start (and charge) the game twice.
+    if (duel.started) return interaction.reply({ content: '⏳ This game already started.', flags: 64 });
+    duel.started = true;
 
-    await updateBalance(duel.initiatorId, -duel.amount);
-    await updateBalance(duel.targetId, -duel.amount);
+    // Take both stakes atomically — only if BOTH players can still afford it.
+    const stakes = await takeDuelStakes(duel);
+    if (!stakes.ok) return cancelDuelNoFunds(interaction, duel, stakes.brokeId, 'Blackjack duel');
+
+    // The stakes are now held by the game. It used to share the 3-minute
+    // accept timer, so a game that simply took longer than that silently
+    // deleted itself and swallowed both players' coins. Give it a longer
+    // clock, and refund both stakes if it STILL times out.
+    const client = interaction.client;
+    setDuelTimeout(duel, 15 * 60 * 1000);
+    duel.onExpire = async (d) => {
+      await updateBalance(d.initiatorId, d.amount);
+      await updateBalance(d.targetId, d.amount);
+      const ch = client.channels.cache.get(d.channelId);
+      const m = ch ? await ch.messages.fetch(d.messageId).catch(() => null) : null;
+      if (m) await m.edit({ content: '⏱️ **Blackjack duel** timed out — both stakes have been refunded.', components: [] }).catch(() => {});
+    };
 
     duel.hands[duel.initiatorId].push(drawCard(duel), drawCard(duel));
     duel.hands[duel.targetId].push(drawCard(duel), drawCard(duel));
@@ -355,48 +552,12 @@ async function handleButton(interaction) {
 
   // ── Last Man Standing: Join ───────────────────────────────────────────────
   if (id.startsWith('lms_join_')) {
-    const gameId = id.slice('lms_join_'.length);
-    const game = getGame(gameId);
-    const { MAX_PLAYERS } = require('../utils/economy/gameManager.js');
-
-    if (!game || game.status !== 'lobby') return interaction.reply({ content: '❌ This game is no longer accepting players.', flags: 64 });
-    if (game.players.includes(interaction.user.id)) return interaction.reply({ content: '❌ You already joined.', flags: 64 });
-    if (game.players.length >= MAX_PLAYERS) return interaction.reply({ content: '❌ The lobby is full.', flags: 64 });
-
-    const balance = await getBalance(interaction.user.id);
-    if (game.betAmount > balance) return interaction.reply({ content: `❌ You need **${game.betAmount}** coins to join.`, flags: 64 });
-
-    await updateBalance(interaction.user.id, -game.betAmount);
-    game.players.push(interaction.user.id);
-
-    const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-    const playerList = game.players.map(p => `<@${p}>`).join(', ');
-    if (msg) await msg.edit({ content: `🎲 **Last Man Standing** — Bet: **${game.betAmount}** coins/player\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
-
-    return interaction.reply({ content: '✅ You joined!', flags: 64 });
+    return handleLobbyJoin(interaction, id.slice('lms_join_'.length), '🎲 **Last Man Standing**');
   }
 
   // ── Russian Roulette: Join ────────────────────────────────────────────────
   if (id.startsWith('rr_join_')) {
-    const gameId = id.slice('rr_join_'.length);
-    const game = getGame(gameId);
-    const { MAX_PLAYERS } = require('../utils/economy/gameManager.js');
-
-    if (!game || game.status !== 'lobby') return interaction.reply({ content: '❌ This game is no longer accepting players.', flags: 64 });
-    if (game.players.includes(interaction.user.id)) return interaction.reply({ content: '❌ You already joined.', flags: 64 });
-    if (game.players.length >= MAX_PLAYERS) return interaction.reply({ content: '❌ The lobby is full.', flags: 64 });
-
-    const balance = await getBalance(interaction.user.id);
-    if (game.betAmount > balance) return interaction.reply({ content: `❌ You need **${game.betAmount}** coins to join.`, flags: 64 });
-
-    await updateBalance(interaction.user.id, -game.betAmount);
-    game.players.push(interaction.user.id);
-
-    const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-    const playerList = game.players.map(p => `<@${p}>`).join(', ');
-    if (msg) await msg.edit({ content: `🔫 **Russian Roulette** — Bet: **${game.betAmount}** coins/player\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
-
-    return interaction.reply({ content: '✅ You joined!', flags: 64 });
+    return handleLobbyJoin(interaction, id.slice('rr_join_'.length), '🔫 **Russian Roulette**');
   }
 
   // ── Russian Roulette: Shoot ───────────────────────────────────────────────
@@ -414,132 +575,27 @@ async function handleButton(interaction) {
     if (!game.rrActive.includes(targetId)) {
       return interaction.reply({ content: '❌ That player is no longer in the game.', flags: 64 });
     }
+    // Double-clicking a shoot button used to fire two shots in one turn.
+    if (game.busy) return interaction.reply({ content: '⏳ Hold on — the last shot is still being resolved.', flags: 64 });
+    game.busy = true;
 
-    // Clear AFK timeout since shooter acted
-    if (game.rrTurnTimeout) { clearTimeout(game.rrTurnTimeout); game.rrTurnTimeout = null; }
-
-    const pot = game.betAmount * game.players.length;
-    const isSelf = targetId === game.rrShooter;
-    const shot = Math.random() < (game.rrBullets / 6);
-
-    if (shot) {
-      // 💥 HIT — target is eliminated
-      game.rrActive = game.rrActive.filter(p => p !== targetId);
-
-      if (game.rrActive.length === 1) {
-        const winnerId = game.rrActive[0];
-        await updateBalance(winnerId, pot);
-
-        const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-        const finalContent = [
-          `🔫 **Russian Roulette — Game Over!**`,
-          ``,
-          `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — and it connected!`,
-          ``,
-          `🏆 <@${winnerId}> is the last survivor and wins **${pot}** coins!`,
-        ].join('\n');
-        if (msg) await msg.edit({ content: finalContent, components: [] });
-        deleteGame(game.id);
-        return interaction.reply({ content: isSelf ? '💀 You shot yourself — eliminated!' : `💥 You eliminated <@${targetId}>! But you're alone now, game over.`, flags: 64 });
+    try {
+      return await handleRRShot(interaction, game, targetId);
+    } catch (err) {
+      console.error('[Games] Russian Roulette shot crashed:', err);
+      await refundGame(game, interaction.client, 'Russian Roulette hit an error');
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ The game hit an error — all bets were refunded.', flags: 64 }).catch(() => {});
       }
-
-      // New random turn — reset bullets
-      await doRRTurn(game, interaction.client, `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — eliminated!`);
-      return interaction.reply({ content: isSelf ? '💀 You shot yourself and were eliminated!' : `💥 <@${targetId}> was eliminated!`, flags: 64 });
-
-    } else {
-      // *click* — miss
-      if (isSelf) {
-        // Shooting yourself and surviving → increment bullets, keep same shooter
-        game.rrBullets = Math.min(game.rrBullets + 1, 5);
-        const guild = interaction.client.guilds.cache.get(game.guildId);
-        const bullets = game.rrBullets;
-
-        // Rebuild shoot buttons for same shooter
-        const buttons = [];
-        for (const pid of game.rrActive) {
-          let label = pid;
-          if (guild) {
-            try {
-              const member = await guild.members.fetch(pid);
-              label = (member.nickname || member.user.username).slice(0, 20);
-            } catch (_) {}
-          }
-          const isSelfBtn = pid === game.rrShooter;
-          buttons.push(
-            new ButtonBuilder()
-              .setCustomId(`rr_shoot_${game.id}_${pid}`)
-              .setLabel(isSelfBtn ? `🎯 ${label} (me)` : label)
-              .setStyle(isSelfBtn ? ButtonStyle.Danger : ButtonStyle.Secondary),
-          );
-        }
-        const rows = [];
-        for (let i = 0; i < buttons.length; i += 5) {
-          rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
-        }
-
-        const survivors = game.rrActive.map(p => `<@${p}>`).join(', ');
-        const content = [
-          `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
-          `Survivors: ${survivors}`,
-          ``,
-          `*click* — <@${game.rrShooter}> shot themselves and survived! Chamber loaded: **${bullets}/6**`,
-          ``,
-          `<@${game.rrShooter}> — pick again! *(${15}s to decide)*`,
-        ].join('\n');
-
-        const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-        if (msg) await msg.edit({ content, components: rows });
-
-        // Reset 15s AFK timer for same shooter
-        if (game.rrTurnTimeout) clearTimeout(game.rrTurnTimeout);
-        game.rrTurnTimeout = setTimeout(async () => {
-          const g = getGame(game.id);
-          if (!g || g.status !== 'active' || g.rrShooter !== game.rrShooter) return;
-          const afkId = g.rrShooter;
-          g.rrActive = g.rrActive.filter(p => p !== afkId);
-          if (g.rrActive.length === 1) {
-            const winnerId = g.rrActive[0];
-            await updateBalance(winnerId, pot);
-            const afkMsg = await interaction.channel.messages.fetch(g.messageId).catch(() => null);
-            if (afkMsg) await afkMsg.edit({ content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond and is eliminated!\n\n🏆 <@${winnerId}> wins **${pot}** coins!`, components: [] });
-            deleteGame(g.id);
-            return;
-          }
-          await doRRTurn(g, interaction.client, `⏱️ <@${afkId}> took too long and has been kicked!`);
-        }, 15000);
-
-        return interaction.reply({ content: `😅 *click* — empty! You survived. Bullet count raised to **${bullets}/6**.`, flags: 64 });
-
-      } else {
-        // Shooting someone else and missing → new random turn (reset bullets)
-        await doRRTurn(game, interaction.client, `*click* — <@${game.rrShooter}> shot at <@${targetId}> and missed!`);
-        return interaction.reply({ content: `*click* — empty! <@${targetId}> survived.`, flags: 64 });
-      }
+      return;
+    } finally {
+      game.busy = false;
     }
   }
 
   // ── Hot Potato: Join ──────────────────────────────────────────────────────
   if (id.startsWith('hp_join_')) {
-    const gameId = id.slice('hp_join_'.length);
-    const game = getGame(gameId);
-    const { MAX_PLAYERS } = require('../utils/economy/gameManager.js');
-
-    if (!game || game.status !== 'lobby') return interaction.reply({ content: '❌ This game is no longer accepting players.', flags: 64 });
-    if (game.players.includes(interaction.user.id)) return interaction.reply({ content: '❌ You already joined.', flags: 64 });
-    if (game.players.length >= MAX_PLAYERS) return interaction.reply({ content: '❌ The lobby is full.', flags: 64 });
-
-    const balance = await getBalance(interaction.user.id);
-    if (game.betAmount > balance) return interaction.reply({ content: `❌ You need **${game.betAmount}** coins to join.`, flags: 64 });
-
-    await updateBalance(interaction.user.id, -game.betAmount);
-    game.players.push(interaction.user.id);
-
-    const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
-    const playerList = game.players.map(p => `<@${p}>`).join(', ');
-    if (msg) await msg.edit({ content: `🥔 **Hot Potato** — Bet: **${game.betAmount}** coins/player\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
-
-    return interaction.reply({ content: '✅ You joined!', flags: 64 });
+    return handleLobbyJoin(interaction, id.slice('hp_join_'.length), '🥔 **Hot Potato**');
   }
 
   // ── Hot Potato: Pass ──────────────────────────────────────────────────────
@@ -592,6 +648,15 @@ async function handleModal(interaction) {
       return interaction.reply({ content: '❌ Please enter a number between 1 and 10.', flags: 64 });
     }
 
+    // Only the right player may submit each number (the modal is only ever
+    // shown to them, but never trust the id alone).
+    if (role === 'target' && interaction.user.id !== duel.targetId) {
+      return interaction.reply({ content: '❌ This duel is not for you.', flags: 64 });
+    }
+    if (role === 'initiator' && interaction.user.id !== duel.initiatorId) {
+      return interaction.reply({ content: '❌ This duel is not for you.', flags: 64 });
+    }
+
     if (role === 'target') {
       duel.targetNumber = raw;
       const row = new ActionRowBuilder().addComponents(
@@ -603,29 +668,41 @@ async function handleModal(interaction) {
     }
 
     if (role === 'initiator') {
+      if (duel.targetNumber == null) {
+        return interaction.reply({ content: '❌ Waiting for the other player to pick their number first.', flags: 64 });
+      }
+      // Submitting twice must not reveal (and pay out) twice.
+      if (duel.resolving) return interaction.reply({ content: '⏳ Already revealing…', flags: 64 });
+      duel.resolving = true;
+
       duel.initiatorNumber = raw;
       const botNumber = Math.floor(Math.random() * 10) + 1;
       const iDiff = Math.abs(duel.initiatorNumber - botNumber);
       const tDiff = Math.abs(duel.targetNumber - botNumber);
 
-      let resultText;
-      if (iDiff < tDiff) {
-        await updateBalance(duel.initiatorId, -duel.amount);
-        await updateBalance(duel.targetId, -duel.amount);
-        await updateBalance(duel.initiatorId, duel.amount * 2);
-        resultText = `🎯 Bot picked **${botNumber}**!\n<@${duel.initiatorId}> guessed **${duel.initiatorNumber}** (off by ${iDiff})\n<@${duel.targetId}> guessed **${duel.targetNumber}** (off by ${tDiff})\n\n🏆 <@${duel.initiatorId}> wins **${duel.amount * 2}** coins!`;
-      } else if (tDiff < iDiff) {
-        await updateBalance(duel.initiatorId, -duel.amount);
-        await updateBalance(duel.targetId, -duel.amount);
-        await updateBalance(duel.targetId, duel.amount * 2);
-        resultText = `🎯 Bot picked **${botNumber}**!\n<@${duel.initiatorId}> guessed **${duel.initiatorNumber}** (off by ${iDiff})\n<@${duel.targetId}> guessed **${duel.targetNumber}** (off by ${tDiff})\n\n🏆 <@${duel.targetId}> wins **${duel.amount * 2}** coins!`;
+      let winnerId = null;
+      if (iDiff < tDiff) winnerId = duel.initiatorId;
+      else if (tDiff < iDiff) winnerId = duel.targetId;
+
+      // On a tie nothing was ever taken, so there is nothing to refund. When
+      // there IS a winner, both stakes are taken now — atomically, and only
+      // if both players can still afford it.
+      if (winnerId) {
+        const stakes = await takeDuelStakes(duel);
+        if (!stakes.ok) return cancelDuelNoFunds(interaction, duel, stakes.brokeId, 'Number duel');
+        deleteDuel(duel.id);
+        await updateBalance(winnerId, duel.amount * 2);
       } else {
-        resultText = `🎯 Bot picked **${botNumber}**!\n<@${duel.initiatorId}> guessed **${duel.initiatorNumber}** (off by ${iDiff})\n<@${duel.targetId}> guessed **${duel.targetNumber}** (off by ${tDiff})\n\n🤝 Tie! Bets refunded.`;
+        deleteDuel(duel.id);
       }
+
+      const header = `🎯 Bot picked **${botNumber}**!\n<@${duel.initiatorId}> guessed **${duel.initiatorNumber}** (off by ${iDiff})\n<@${duel.targetId}> guessed **${duel.targetNumber}** (off by ${tDiff})\n\n`;
+      const resultText = winnerId
+        ? `${header}🏆 <@${winnerId}> wins **${duel.amount * 2}** coins!`
+        : `${header}🤝 Tie! Bets refunded.`;
 
       const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
       if (msg) await msg.edit({ content: resultText, components: [] });
-      deleteDuel(duel.id);
       return interaction.reply({ content: '✅ Numbers revealed!', flags: 64 });
     }
   }
