@@ -17,21 +17,10 @@ module.exports = {
 
     // Next 1st of month at 1:00 AM Riyadh (UTC+3 → 22:00 UTC previous day)
     // We calculate the next 1st of month in Riyadh time as a UTC timestamp
-    function nextFirstOfMonth() {
-      const d = new Date(now);
-      // Advance to next month's 1st
-      d.setUTCMonth(d.getUTCMonth() + 1, 1);
-      // 1:00 AM Riyadh = 22:00 UTC the previous calendar day
-      d.setUTCDate(d.getUTCDate() - 1);
-      d.setUTCHours(22, 0, 0, 0);
-      // If that moment is already in the past, add another month
-      if (d <= now) {
-        d.setUTCMonth(d.getUTCMonth() + 1);
-      }
-      return d;
-    }
-
-    const nextMonthly = nextFirstOfMonth();
+    // Uses the same helper as the scheduler's startup log. (The old inline
+    // version used setUTCMonth(+1) on a month-end date, which overflows and
+    // gave a wrong date for the last 2 hours of a month-end day.)
+    const nextMonthly = require('../../utils/dateHelpers.js').msUntilNextMonthlyRun(now).next;
     const msUntil = nextMonthly.getTime() - now.getTime();
     const daysUntil  = Math.floor(msUntil / (1000 * 60 * 60 * 24));
     const hoursUntil = Math.floor((msUntil % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -89,7 +78,7 @@ module.exports = {
         },
         {
           name: '📂 Statp Category',
-          value: `<#${config.statp.category}>`,
+          value: (config.statp.categories || []).map(id => `<#${id}>`).join(', ') || 'None',
           inline: true,
         },
         {
