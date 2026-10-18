@@ -52,7 +52,7 @@ async function buildHistoryPayload(targetUser) {
     embed.addFields({
       name: `Warning #${w.warnNumberAtIssue} (ID ${w.id})`,
       value:
-        `Reason: ${w.reason}\nIssued by: <@${w.issuedBy}>\nDate: <t:${Math.floor(w.issuedAt / 1000)}:d>\n` +
+        `Reason: ${String(w.reason).length > 500 ? String(w.reason).slice(0, 499) + '…' : w.reason}\nIssued by: <@${w.issuedBy}>\nDate: <t:${Math.floor(w.issuedAt / 1000)}:d>\n` +
         `Evidence: ${evidenceText}\n` +
         `Punishment: ${w.punishmentType && w.punishmentType !== 'none' ? `${w.punishmentType}${w.punishmentReversed ? ' (reversed)' : ''}` : 'None'}`,
       inline: false,
@@ -161,7 +161,7 @@ async function handleButton(interaction) {
 
     const reasonInput = new TextInputBuilder()
       .setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph)
-      .setValue(warning.reason).setRequired(true);
+      .setValue(String(warning.reason).slice(0, 900)).setMaxLength(900).setRequired(true);
 
     const dateInput = new TextInputBuilder()
       .setCustomId('date').setLabel('Date issued (YYYY-MM-DD, leave as-is to skip)').setStyle(TextInputStyle.Short)
