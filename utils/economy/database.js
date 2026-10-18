@@ -37,6 +37,25 @@ db.serialize(() => {
         )
     `);
 
+    // Migration: remembers whether the "expires within 24h" DM was already
+    // sent for the current expiry window, so the 6-hourly check (and every
+    // restart) doesn't re-send it. Reset to 0 whenever the role is extended.
+    db.run("ALTER TABLE purchased_roles ADD COLUMN expiryWarned INTEGER DEFAULT 0", (err) => {
+        if (err && !/duplicate column/i.test(err.message)) {
+            console.error('Error adding expiryWarned column:', err.message);
+        }
+    });
+
+    // Voice sessions that are currently in progress. Kept in the database so
+    // a restart/deploy doesn't wipe everyone's voice time. A row exists only
+    // while the user is in a (non-AFK) voice channel.
+    db.run(`
+        CREATE TABLE IF NOT EXISTS voice_sessions (
+            userId TEXT PRIMARY KEY,
+            joinedAt INTEGER
+        )
+    `);
+
     db.run(`
         CREATE TABLE IF NOT EXISTS role_members (
             roleId TEXT,
