@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { getBalance, updateBalance } = require('../../utils/economy/shopManager.js');
+const { getBalance, updateBalance, spendCoins } = require('../../utils/economy/shopManager.js');
 const allowedChannels = ['1415933682748751923'];
 
 module.exports = {
@@ -16,8 +16,11 @@ module.exports = {
         const userId = interaction.user.id;
         const color = interaction.options.getString('color');
         const bet = interaction.options.getInteger('bet');
-        const balance = await getBalance(userId);
-        if (bet > balance) {
+
+        // Take the bet up front, atomically (no check-then-deduct gap).
+        const paid = await spendCoins(userId, bet);
+        if (!paid) {
+            const balance = await getBalance(userId);
             return interaction.editReply(`❌ You only have ${balance} coins. Cannot bet ${bet}.`);
         }
 
@@ -25,13 +28,13 @@ module.exports = {
         const isWin = Math.random() < 0.5;
         let outcome;
         if (isWin) {
-            await updateBalance(userId, bet);
+            await updateBalance(userId, bet * 2); // stake back + winnings
             outcome = `🎰 The ball landed on ${color === 'red' ? '🔴' : '⚫'} and you won **${bet}** coins!`;
         } else {
-            await updateBalance(userId, -bet);
             outcome = `🎰 The ball landed on ${color === 'red' ? '⚫' : '🔴'} and you lost **${bet}** coins.`;
         }
 
-        await interaction.editReply(`${outcome}\nNew balance: ${balance + (isWin ? bet : -bet)} coins.`);
+        const newBalance = await getBalance(userId);
+        await interaction.editReply(`${outcome}\nNew balance: ${newBalance} coins.`);
     }
 };
