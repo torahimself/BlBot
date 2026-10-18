@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { getBalance, updateBalance } = require('../../utils/economy/shopManager.js');
+const { getBalance, updateBalance, spendCoins } = require('../../utils/economy/shopManager.js');
 
 const allowedChannels = ['1415933682748751923'];
 
@@ -28,9 +28,12 @@ module.exports = {
     const userId = interaction.user.id;
     const bet = interaction.options.getInteger('bet');
     const guess = interaction.options.getInteger('guess');
-    const balance = await getBalance(userId);
 
-    if (bet > balance) {
+    // Take the bet up front, atomically. (Checking the balance first and
+    // deducting afterwards let two quick /dice commands spend the same coins.)
+    const paid = await spendCoins(userId, bet);
+    if (!paid) {
+      const balance = await getBalance(userId);
       return interaction.editReply(`❌ You only have ${balance} coins. Cannot bet ${bet}.`);
     }
 
@@ -38,15 +41,13 @@ module.exports = {
     const roll = Math.floor(Math.random() * 4) + 1;
     const isWin = guess === roll;
 
-    let newBalance;
     if (isWin) {
       const winnings = bet * 3;
-      await updateBalance(userId, winnings);
-      newBalance = balance + winnings;
+      await updateBalance(userId, bet + winnings); // stake back + winnings
+      const newBalance = await getBalance(userId);
       await interaction.editReply(`🎲 The number was **${roll}**. You guessed **${guess}** — you won **${winnings}** coins!\nBalance: ${newBalance} coins.`);
     } else {
-      await updateBalance(userId, -bet);
-      newBalance = balance - bet;
+      const newBalance = await getBalance(userId);
       await interaction.editReply(`🎲 The number was **${roll}**. You guessed **${guess}** — you lost **${bet}** coins.\nBalance: ${newBalance} coins.`);
     }
   },
