@@ -130,6 +130,13 @@ class AttachmentCounter {
             break;
           }
 
+          // Always move the paging cursor past every message we look at —
+          // including ones skipped below (bots, members without a tracked
+          // role). Otherwise a batch containing no qualifying message left the
+          // cursor unchanged and the SAME 100 messages were fetched again and
+          // again until the batch ceiling, so older messages were never reached.
+          lastMessageId = messageId;
+
           // Skip messages newer than the upper bound (relevant for automatic
           // reports scanning a specific past month), but keep paginating
           // since Discord returns newest-first.
