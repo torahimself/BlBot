@@ -7,7 +7,7 @@ module.exports = {
         .setName('jail')
         .setDescription('Jail a user — strips their roles and applies the jail role (admin/staff only)')
         .addUserOption(option => option.setName('user').setDescription('User to jail').setRequired(true))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for jailing').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for jailing').setRequired(true).setMaxLength(900))
         .addStringOption(option => option.setName('duration').setDescription('Optional: e.g. "1d", "3h", "45m", "1d12h" — omit for permanent').setRequired(false))
         .addAttachmentOption(option => option.setName('evidence').setDescription('Optional: image or video evidence').setRequired(false)),
     async execute(interaction) {
