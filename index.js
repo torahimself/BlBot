@@ -21,6 +21,9 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
+    // Required for voice join/leave events — without it voiceStateUpdate never
+    // fires and nobody earns coins for time spent in voice.
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
