@@ -8,7 +8,7 @@ const warnHistoryUI = require('../utils/warn/warnHistoryUI.js');
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
 
-const { createCustomRole, editRole, getBalance, ROLE_PRICE, updateBalance } = shopManager;
+const { createCustomRole, editRole, getBalance, ROLE_PRICE, updateBalance, spendCoins } = shopManager;
 
 // Game button/modal prefixes — routed to gameHandler
 const GAME_BUTTON_PREFIXES = ['coinflip_', 'numberduel_', 'bj_', 'lms_', 'rr_', 'hp_'];
@@ -171,9 +171,28 @@ module.exports = {
         const confirmed = trade.confirm(userId);
 
         if (confirmed) {
-          await updateBalance(trade.initiatorId, -trade.initiatorOffer);
+          // Coins are only moved if BOTH sides can still afford their offer
+          // right now. (Balances used to be checked only when the offers were
+          // made, so someone could spend their coins in between and the trade
+          // would push them below zero.) Each deduction is atomic; if the
+          // second one fails, the first is handed back.
+          const initiatorPaid = await spendCoins(trade.initiatorId, trade.initiatorOffer);
+          let targetPaid = false;
+          if (initiatorPaid) {
+            targetPaid = await spendCoins(trade.targetId, trade.targetOffer);
+            if (!targetPaid) await updateBalance(trade.initiatorId, trade.initiatorOffer);
+          }
+
+          if (!initiatorPaid || !targetPaid) {
+            const brokeId = !initiatorPaid ? trade.initiatorId : trade.targetId;
+            const failMsg = `❌ Trade cancelled — <@${brokeId}> no longer has enough coins. Nothing was transferred.`;
+            const failedMsg = await interaction.channel.messages.fetch(trade.messageId).catch(() => null);
+            if (failedMsg) await failedMsg.edit({ content: failMsg, components: [] }).catch(() => {});
+            await interaction.reply({ content: failMsg, flags: 64 });
+            return;
+          }
+
           await updateBalance(trade.targetId, trade.initiatorOffer);
-          await updateBalance(trade.targetId, -trade.targetOffer);
           await updateBalance(trade.initiatorId, trade.targetOffer);
 
           const initiatorUser = await interaction.client.users.fetch(trade.initiatorId);
