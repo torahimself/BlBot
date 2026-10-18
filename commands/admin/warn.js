@@ -7,7 +7,7 @@ module.exports = {
         .setName('warn')
         .setDescription('Issue a warning to a user (staff only)')
         .addUserOption(option => option.setName('user').setDescription('User to warn').setRequired(true))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for the warning').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for the warning').setRequired(true).setMaxLength(900))
         .addAttachmentOption(option => option.setName('evidence').setDescription('Optional: evidence for this warning').setRequired(false)),
     async execute(interaction) {
         const isAdmin = interaction.member.permissions.has('Administrator');
@@ -35,6 +35,12 @@ module.exports = {
         const member = guild.members.cache.get(targetUser.id) || await guild.members.fetch(targetUser.id).catch(() => null);
         if (!member) {
             return interaction.editReply('❌ That user is not in this server.');
+        }
+
+        // Same rule as /jail and /jailp: warnings escalate to jail/ban, so staff
+        // can't warn someone ranked equal to or above them.
+        if (member.roles.highest.position >= interaction.member.roles.highest.position && guild.ownerId !== interaction.user.id) {
+            return interaction.editReply('❌ You cannot warn someone with an equal or higher role than you.');
         }
 
         const result = await addWarning(interaction.client, guild, member, interaction.user, reason, evidence);
