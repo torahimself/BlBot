@@ -440,8 +440,13 @@ async function pollAccount(account, channel, state) {
   }
 
   const newTweets = [];
+  // Tweet IDs only ever increase, so anything at or below the bookmark is
+  // already posted. (Matching only on equality re-posted old tweets whenever
+  // the bookmarked tweet had been deleted or had scrolled out of the fetch.)
+  const isNumericId = (v) => typeof v === 'string' && /^\d+$/.test(v);
   for (const item of items) {
     if (item.tweetId === lastId) break;
+    if (isNumericId(item.tweetId) && isNumericId(lastId) && BigInt(item.tweetId) <= BigInt(lastId)) break;
     newTweets.push(item);
   }
 
