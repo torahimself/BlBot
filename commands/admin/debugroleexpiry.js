@@ -39,7 +39,8 @@ module.exports = {
         const newExpiration = Date.now() + (minutes * 60 * 1000);
 
         await new Promise((resolve, reject) => {
-            db.run('UPDATE purchased_roles SET expirationDate = ? WHERE roleId = ?', [newExpiration, role.id], (err) => {
+            // expiryWarned reset so the "expires soon" DM can be tested again.
+            db.run('UPDATE purchased_roles SET expirationDate = ?, expiryWarned = 0 WHERE roleId = ?', [newExpiration, role.id], (err) => {
                 if (err) reject(err); else resolve();
             });
         });
