@@ -7,7 +7,7 @@ module.exports = {
         .setName('unjail')
         .setDescription('Unjail a user — restores their previous roles (admin/staff only)')
         .addUserOption(option => option.setName('user').setDescription('User to unjail').setRequired(true))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for unjailing').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for unjailing').setRequired(true).setMaxLength(900))
         .addAttachmentOption(option => option.setName('evidence').setDescription('Optional: image or video evidence').setRequired(false)),
     async execute(interaction) {
         const isAdmin = interaction.member.permissions.has('Administrator');
