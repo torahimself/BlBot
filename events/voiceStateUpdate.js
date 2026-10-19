@@ -1,6 +1,10 @@
 const { onVoiceJoin, onVoiceLeave, AFK_CHANNEL_IDS } = require('../utils/economy/voiceTracker.js');
 const { updateBalance } = require('../utils/economy/shopManager.js');
 
+// Voice coins are still earned exactly as before — the "you earned X coins for
+// Y minutes" DM was removed on request (it fired on every short join/leave).
+// Coins are credited silently; use /balance to check.
+
 module.exports = {
   name: 'voiceStateUpdate',
   async execute(oldState, newState) {
@@ -21,11 +25,10 @@ module.exports = {
     if (oldChannel && !newChannel) {
       const result = onVoiceLeave(userId);
       if (result) {
-        await updateBalance(userId, result.earned);
         try {
-          await member.send(`🎤 You earned **${result.earned}** coins for spending **${result.minutesInVoice}** minutes in voice!`);
-        } catch (_) {
-          // DMs disabled — silently skip
+          await updateBalance(userId, result.earned);
+        } catch (err) {
+          console.error(`[Voice] Could not credit ${result.earned} coins to ${userId}:`, err);
         }
       }
       return;
@@ -37,10 +40,11 @@ module.exports = {
         // Moving into AFK — treat as leave
         const result = onVoiceLeave(userId);
         if (result) {
-          await updateBalance(userId, result.earned);
           try {
-            await member.send(`🎤 You earned **${result.earned}** coins for spending **${result.minutesInVoice}** minutes in voice!`);
-          } catch (_) {}
+            await updateBalance(userId, result.earned);
+          } catch (err) {
+            console.error(`[Voice] Could not credit ${result.earned} coins to ${userId}:`, err);
+          }
         }
       } else if (AFK_CHANNEL_IDS.includes(oldChannel)) {
         // Moving out of AFK — treat as join
