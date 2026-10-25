@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { createDuel, isInDuel } = require('../../utils/economy/duelManager.js');
 const { getBalance } = require('../../utils/economy/shopManager.js');
+const { isBet, canBet, capRefusal } = require('../../utils/economy/stakes.js');
 
 const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
 
@@ -9,7 +10,7 @@ module.exports = {
     .setName('coinflip')
     .setDescription('Challenge someone to a coin flip duel')
     .addUserOption(o => o.setName('user').setDescription('User to challenge').setRequired(true))
-    .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
+    .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet (leave empty to play for free)').setRequired(false).setMinValue(1)),
 
   async execute(interaction) {
     if (!ALLOWED_CHANNELS.includes(interaction.channelId)) {
@@ -18,18 +19,24 @@ module.exports = {
 
     const initiator = interaction.user;
     const target = interaction.options.getUser('user');
-    const bet = interaction.options.getInteger('bet');
+    const bet = interaction.options.getInteger('bet') || 0; // 0 = free game
 
     if (target.id === initiator.id) return interaction.editReply('❌ You cannot challenge yourself.');
     if (target.bot) return interaction.editReply('❌ You cannot challenge a bot.');
     if (isInDuel(initiator.id)) return interaction.editReply('❌ You are already in a duel.');
     if (isInDuel(target.id)) return interaction.editReply(`❌ <@${target.id}> is already in a duel.`);
 
-    const balance = await getBalance(initiator.id);
-    if (bet > balance) return interaction.editReply(`❌ You only have ${balance} coins.`);
+    if (isBet(bet)) {
+      const balance = await getBalance(initiator.id);
+      if (bet > balance) return interaction.editReply(`❌ You only have ${balance} coins.`);
 
-    const targetBalance = await getBalance(target.id);
-    if (bet > targetBalance) return interaction.editReply(`❌ <@${target.id}> only has ${targetBalance} coins.`);
+      const targetBalance = await getBalance(target.id);
+      if (bet > targetBalance) return interaction.editReply(`❌ <@${target.id}> only has ${targetBalance} coins.`);
+
+      // Anyone already at the weekly net-profit cap can only play for free.
+      const cap = await canBet([initiator.id, target.id], bet);
+      if (!cap.ok) return interaction.editReply(capRefusal(cap.userId, cap.userId !== initiator.id));
+    }
 
     // initiatorSide will be set after target accepts
     const duel = createDuel('coinflip', initiator.id, target.id, bet, { initiatorSide: null });
@@ -40,7 +47,7 @@ module.exports = {
     );
 
     const msg = await interaction.editReply({
-      content: `🪙 <@${initiator.id}> challenges <@${target.id}> to a **Coin Flip** for **${bet}** coins!\n<@${target.id}>, do you accept?`,
+      content: `🪙 <@${initiator.id}> challenges <@${target.id}> to a **Coin Flip** ${isBet(bet) ? `for **${bet}** coins` : '(free game, no bet)'}!\n<@${target.id}>, do you accept?`,
       components: [row],
     });
 
