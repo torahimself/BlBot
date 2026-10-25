@@ -8,6 +8,7 @@
     "dev": "NODE_PATH=./vendor nodemon index.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.13",
     "@the-convocation/twitter-scraper": "^0.22.3",
     "discord.js": "^14.27.0",
     "dotenv": "^16.4.5",
