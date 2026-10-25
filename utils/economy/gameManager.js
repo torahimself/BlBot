@@ -1,4 +1,4 @@
-const { updateBalance } = require('./shopManager.js');
+const { isBet, settleBet, refundStakes } = require('./stakes.js');
 
 const games = new Map();
 const MAX_PLAYERS = 6;
@@ -52,12 +52,34 @@ function isInGame(userId) {
 
 // Pays the pot to the winner — at most once per game, no matter how many
 // code paths (a click, the AFK timer, ...) race to finish it.
+// Real bets go through engine/betting.settle (no tax; the winner's weekly NET
+// profit is capped and anything cut is handed back to the losers). A free game
+// (betAmount 0) moves no coins at all.
+// Returns the settle result (with .prize = what the winner really got) or null
+// if the game was already paid.
 async function payWinner(game, winnerId, pot) {
-  if (game.paidOut) return false;
+  if (game.paidOut) return null;
   game.paidOut = true;
-  await updateBalance(winnerId, pot);
-  return true;
+  try {
+    const list = game.allPlayers && game.allPlayers.length ? game.allPlayers : game.players;
+    const stakes = {};
+    for (const pid of list) stakes[pid] = game.betAmount;
+    const res = await settleBet({ kind: 'pot', stakes, payouts: { [winnerId]: pot } });
+    res.prize = res.free ? 0 : (res.payouts[winnerId] || 0);
+    return res;
+  } catch (err) {
+    game.paidOut = false; // nothing was paid — let refundGame hand the stakes back
+    throw err;
+  }
 }
+
+// " wins **N** coins!" for a bet game, " wins!" for a free one.
+function winText(game, res, pot) {
+  if (!isBet(game.betAmount)) return ' wins!';
+  return ` wins **${res ? res.prize : pot}** coins!`;
+}
+const noteText = (res) => (res && res.note) || '';
+const potText = (game, pot) => (isBet(game.betAmount) ? ` — Pot: **${pot}** coins` : ' — free game');
 
 // Something went wrong mid-game (message deleted, missing permission, a
 // crash...). Give every player's stake back and free them up, instead of
@@ -67,13 +89,11 @@ async function refundGame(game, client, note) {
   if (!game.paidOut) {
     game.paidOut = true;
     const list = game.allPlayers && game.allPlayers.length ? game.allPlayers : game.players;
-    for (const pid of list) {
-      try { await updateBalance(pid, game.betAmount); }
-      catch (err) { console.error(`[Games] Refund failed for ${pid}:`, err); }
-    }
+    await refundStakes(list, game.betAmount);
     const channel = client && client.channels && client.channels.cache.get(game.channelId);
     if (channel) {
-      await channel.send(`⚠️ ${note || 'The game ran into an error'} — all bets have been refunded.`).catch(() => {});
+      const tail = isBet(game.betAmount) ? ' — all bets have been refunded.' : ' — the game was cancelled.';
+      await channel.send(`⚠️ ${note || 'The game ran into an error'}${tail}`).catch(() => {});
     }
   }
   if (gameStillThere) deleteGame(game.id);
@@ -91,7 +111,7 @@ async function runLMS(game, client) {
     let active = [...game.players];
     const pot = game.betAmount * active.length;
 
-    await channel.send(`🎲 **Last Man Standing** begins! **${active.length}** players — pot: **${pot}** coins`);
+    await channel.send(`🎲 **Last Man Standing** begins! **${active.length}** players${isBet(game.betAmount) ? ` — pot: **${pot}** coins` : ' — free game'}`);
     await new Promise(r => setTimeout(r, 2000));
 
     while (active.length > 1) {
@@ -111,8 +131,8 @@ async function runLMS(game, client) {
     }
 
     const winnerId = active[0];
-    await payWinner(game, winnerId, pot);
-    await channel.send(`🏆 <@${winnerId}> is the last one standing and wins **${pot}** coins!`);
+    const res = await payWinner(game, winnerId, pot);
+    await channel.send(`🏆 <@${winnerId}> is the last one standing and${winText(game, res, pot)}${noteText(res)}`);
     deleteGame(game.id);
   } catch (err) {
     console.error('[Games] Last Man Standing crashed:', err);
@@ -162,7 +182,7 @@ async function doRRTurn(game, client, extraLine = null) {
 
     const survivors = game.rrActive.map(p => `<@${p}>`).join(', ');
     const lines = [
-      `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
+      `🔫 **Russian Roulette**${potText(game, pot)}`,
       `Survivors: ${survivors}`,
       ``,
     ];
@@ -185,10 +205,10 @@ async function doRRTurn(game, client, extraLine = null) {
 
         if (g.rrActive.length === 1) {
           const winnerId = g.rrActive[0];
-          await payWinner(g, winnerId, pot);
+          const res = await payWinner(g, winnerId, pot);
           const afkMsg = await channel.messages.fetch(g.messageId).catch(() => null);
           if (afkMsg) await afkMsg.edit({
-            content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond in time and is eliminated!\n\n🏆 <@${winnerId}> wins **${pot}** coins!`,
+            content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond in time and is eliminated!\n\n🏆 <@${winnerId}>${winText(g, res, pot)}${noteText(res)}`,
             components: [],
           });
           deleteGame(g.id);
@@ -217,6 +237,6 @@ async function startRussianRoulette(game, client) {
 module.exports = {
   createGame, getGame, deleteGame, isInGame,
   runLMS, startRussianRoulette, doRRTurn,
-  payWinner, refundGame,
+  payWinner, refundGame, winText, noteText, potText,
   games, MAX_PLAYERS, MIN_PLAYERS,
 };
