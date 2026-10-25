@@ -8,7 +8,7 @@ const StatpScanner = require('../utils/statpScanner');
 const StatpReportGenerator = require('../utils/statpReportGenerator');
 const Scheduler = require('../utils/scheduler');
 const { checkExpiredRoles } = require('../utils/economy/shopManager.js');
-const { seedVoiceUsers } = require('../utils/economy/voiceTracker.js');
+const economyEngine = require('../utils/economy/engine');
 const { startTracker } = require('../utils/twitterTracker.js');
 const { startPeriodicCheck: startJailCheck } = require('../utils/jail/jailManager.js');
 const { startExpirationCheck: startWarnCheck } = require('../utils/warn/warnManager.js');
@@ -91,12 +91,12 @@ module.exports = {
       console.error('❌ Error starting warning system periodic check:', error);
     }
 
-    // Seed voice tracker with users already in voice channels
+    // Economy engine: voice sampler (every minute), event clock, housekeeping.
+    // (Replaces the old join/leave voice tracker.)
     try {
-      seedVoiceUsers(client);
-      console.log('🎤 Voice tracker activated');
+      economyEngine.start(client);
     } catch (error) {
-      console.error('❌ Error starting voice tracker:', error);
+      console.error('❌ Error starting economy engine:', error);
     }
 
     // Twitter / X post tracker — @Emmaoinkk → channel 1437107048348123136
