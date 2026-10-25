@@ -4,6 +4,8 @@ const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeM
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const gameHandler = require('../handlers/gameHandler.js');
 const warnHistoryUI = require('../utils/warn/warnHistoryUI.js');
+const partyGames = require('../utils/games/index.js');
+const economyViews = require('../utils/economy/engine/views.js');
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
@@ -20,9 +22,13 @@ module.exports = {
 
     // ---------- SLASH COMMANDS ----------
     if (interaction.isChatInputCommand()) {
-      if (!MODAL_COMMANDS.includes(interaction.commandName)) {
+      const command = commandHandler.commands.get(interaction.commandName);
+      const isModalCmd = MODAL_COMMANDS.includes(interaction.commandName);
+
+      if (!isModalCmd) {
         try {
-          await interaction.deferReply();
+          // Commands may set `ephemeral: true` to get a private reply.
+          await interaction.deferReply(command && command.ephemeral ? { flags: 64 } : {});
         } catch (error) {
           if (error.code === 10062) {
             console.warn('Interaction expired, cannot defer reply.');
@@ -33,9 +39,8 @@ module.exports = {
         }
       }
 
-      const command = commandHandler.commands.get(interaction.commandName);
       if (!command) {
-        if (!MODAL_COMMANDS.includes(interaction.commandName)) {
+        if (!isModalCmd) {
           await interaction.editReply('❌ Command not found!');
         } else {
           await interaction.reply({ content: '❌ Command not found!', flags: 64 });
@@ -60,8 +65,25 @@ module.exports = {
       return;
     }
 
+    // ---------- PARTY GAMES (buttons, select menus, forms with customId "pg:…") ----------
+    if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && String(interaction.customId).startsWith('pg:')) {
+      await partyGames.handleInteraction(interaction);
+      return;
+    }
+
     // ---------- SELECT MENUS ----------
     if (interaction.isStringSelectMenu()) {
+      if (interaction.customId.startsWith(economyViews.INV_PREFIX)) {
+        try {
+          await economyViews.handleInventorySelect(interaction);
+        } catch (err) {
+          console.error('inventory select error:', err);
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ An error occurred.', flags: 64 }).catch(() => {});
+          }
+        }
+        return;
+      }
       try {
         const handled = await warnHistoryUI.handleSelectMenu(interaction);
         if (handled) return;
