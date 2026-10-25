@@ -1,21 +1,36 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { getDuel, deleteDuel, setDuelTimeout } = require('../utils/economy/duelManager.js');
-const { getGame, deleteGame, doRRTurn, payWinner, refundGame, MAX_PLAYERS } = require('../utils/economy/gameManager.js');
-const { getBalance, updateBalance, spendCoins } = require('../utils/economy/shopManager.js');
+const { getGame, deleteGame, doRRTurn, payWinner, refundGame, winText, noteText, potText, MAX_PLAYERS } = require('../utils/economy/gameManager.js');
+const { getBalance } = require('../utils/economy/shopManager.js');
+const { isBet, takeStakes, refundStakes, canBet, settleBet, betLabel } = require('../utils/economy/stakes.js');
 
-// Takes `amount` coins from BOTH duel players atomically (each deduction only
+// Takes the bet from BOTH duel players atomically (each deduction only
 // succeeds if that player can afford it right now). If either can't pay, any
 // coins already taken are returned and `{ ok: false, brokeId }` says who.
+// A free duel (amount 0) takes nothing and is always ok.
 async function takeDuelStakes(duel) {
-  if (!(await spendCoins(duel.initiatorId, duel.amount))) {
-    return { ok: false, brokeId: duel.initiatorId };
-  }
-  if (!(await spendCoins(duel.targetId, duel.amount))) {
-    await updateBalance(duel.initiatorId, duel.amount);
-    return { ok: false, brokeId: duel.targetId };
-  }
-  return { ok: true };
+  return takeStakes([duel.initiatorId, duel.targetId], duel.amount);
 }
+
+// Pays a finished DUEL. winnerId null = tie/refund. Free duel moves no coins.
+async function settleDuel(duel, winnerId) {
+  const stakes = { [duel.initiatorId]: duel.amount, [duel.targetId]: duel.amount };
+  const payouts = winnerId
+    ? { [winnerId]: duel.amount * 2 }
+    : { [duel.initiatorId]: duel.amount, [duel.targetId]: duel.amount };
+  let res;
+  try {
+    res = await settleBet({ kind: 'pot', stakes, payouts });
+  } catch (err) {
+    // Nothing was paid out — give both stakes back rather than lose them.
+    await refundStakes([duel.initiatorId, duel.targetId], duel.amount);
+    throw err;
+  }
+  res.prize = res.free || !winnerId ? 0 : (res.payouts[winnerId] || 0);
+  return res;
+}
+
+const duelWinText = (duel, res) => (isBet(duel.amount) ? ` wins **${res.prize}** coins!` : ' wins!');
 
 async function cancelDuelNoFunds(interaction, duel, brokeId, label) {
   deleteDuel(duel.id);
@@ -39,18 +54,22 @@ async function handleLobbyJoin(interaction, gameId, title) {
   if (game.players.includes(uid)) return interaction.reply({ content: '❌ You already joined.', flags: 64 });
   if (game.players.length >= MAX_PLAYERS) return interaction.reply({ content: '❌ The lobby is full.', flags: 64 });
 
-  const paid = await spendCoins(uid, game.betAmount);
-  if (!paid) return interaction.reply({ content: `❌ You need **${game.betAmount}** coins to join.`, flags: 64 });
+  if (isBet(game.betAmount)) {
+    const cap = await canBet([uid], game.betAmount);
+    if (!cap.ok) return interaction.reply({ content: '❌ You reached the weekly betting profit limit, so you can only join free games until it resets.', flags: 64 });
+  }
+  const taken = await takeStakes([uid], game.betAmount);
+  if (!taken.ok) return interaction.reply({ content: `❌ You need **${game.betAmount}** coins to join.`, flags: 64 });
 
   if (!getGame(game.id) || game.status !== 'lobby' || game.players.includes(uid) || game.players.length >= MAX_PLAYERS) {
-    await updateBalance(uid, game.betAmount);
+    await refundStakes([uid], game.betAmount);
     return interaction.reply({ content: '❌ Could not join (the lobby closed, filled up, or you were already in). You were not charged.', flags: 64 });
   }
   game.players.push(uid);
 
   const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
   const playerList = game.players.map(p => `<@${p}>`).join(', ');
-  if (msg) await msg.edit({ content: `${title} — Bet: **${game.betAmount}** coins/player\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
+  if (msg) await msg.edit({ content: `${title} — ${betLabel(game.betAmount)}\nPlayers (${game.players.length}/${MAX_PLAYERS}): ${playerList}\n\nGame starts soon!`, components: msg.components });
 
   return interaction.reply({ content: '✅ You joined!', flags: 64 });
 }
@@ -74,7 +93,7 @@ function buildBJPublicContent(duel) {
   const iCards = duel.hands[iId].length;
   const tCards = duel.hands[tId].length;
   return [
-    `🃏 **Blackjack Duel** — Bet: **${duel.amount}** coins each`,
+    `🃏 **Blackjack Duel** — ${isBet(duel.amount) ? `Bet: **${duel.amount}** coins each` : 'Free game'}`,
     `<@${iId}>: 🂠 ${iCards} card${iCards !== 1 ? 's' : ''} — ${iStatus}`,
     `<@${tId}>: 🂠 ${tCards} card${tCards !== 1 ? 's' : ''} — ${tStatus}`,
   ].join('\n');
@@ -119,27 +138,21 @@ async function resolveBJ(duel, channel) {
   const iCards = duel.hands[iId].map(c => c.display).join(' ');
   const tCards = duel.hands[tId].map(c => c.display).join(' ');
 
+  let winnerId = null;
+  let why;
+  if (iBust && tBust) why = 'Both players busted!';
+  else if (iBust) { winnerId = tId; why = `<@${iId}> busted!`; }
+  else if (tBust) { winnerId = iId; why = `<@${tId}> busted!`; }
+  else if (iVal > tVal) { winnerId = iId; why = `**${iVal}** vs **${tVal}**`; }
+  else if (tVal > iVal) { winnerId = tId; why = `**${tVal}** vs **${iVal}**`; }
+  else why = `Tie! Both had **${iVal}**.`;
+
+  const res = await settleDuel(duel, winnerId);
   let resultLine;
-  if (iBust && tBust) {
-    await updateBalance(iId, duel.amount);
-    await updateBalance(tId, duel.amount);
-    resultLine = 'Both players busted! Bets refunded.';
-  } else if (iBust) {
-    await updateBalance(tId, duel.amount * 2);
-    resultLine = `<@${iId}> busted! <@${tId}> wins **${duel.amount * 2}** coins!`;
-  } else if (tBust) {
-    await updateBalance(iId, duel.amount * 2);
-    resultLine = `<@${tId}> busted! <@${iId}> wins **${duel.amount * 2}** coins!`;
-  } else if (iVal > tVal) {
-    await updateBalance(iId, duel.amount * 2);
-    resultLine = `<@${iId}> wins! **${iVal}** vs **${tVal}** — wins **${duel.amount * 2}** coins!`;
-  } else if (tVal > iVal) {
-    await updateBalance(tId, duel.amount * 2);
-    resultLine = `<@${tId}> wins! **${tVal}** vs **${iVal}** — wins **${duel.amount * 2}** coins!`;
+  if (winnerId) {
+    resultLine = `${why} <@${winnerId}>${duelWinText(duel, res)}${res.note}`;
   } else {
-    await updateBalance(iId, duel.amount);
-    await updateBalance(tId, duel.amount);
-    resultLine = `Tie! Both had **${iVal}**. Bets refunded.`;
+    resultLine = `${why}${isBet(duel.amount) ? ' Bets refunded.' : ''}`;
   }
 
   const finalContent = [
@@ -177,7 +190,7 @@ async function startHotPotato(game, client) {
   const msg = await channel.messages.fetch(game.messageId).catch(() => null);
   if (msg) {
     await msg.edit({
-      content: `🥔 **Hot Potato!** Pot: **${pot}** coins\n<@${game.potatoHolder}> is holding the potato — pass it before it explodes!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
+      content: `🥔 **Hot Potato!**${potText(game, pot)}\n<@${game.potatoHolder}> is holding the potato — pass it before it explodes!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
       components: [row],
     });
   }
@@ -197,11 +210,11 @@ async function startHotPotato(game, client) {
 
       if (g.players.length === 1) {
         const winnerId = g.players[0];
-        await payWinner(g, winnerId, g._totalPot);
+        const res = await payWinner(g, winnerId, g._totalPot);
         const finalMsg = await ch.messages.fetch(g.messageId).catch(() => null);
         if (finalMsg) {
           await finalMsg.edit({
-            content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\n\n🏆 <@${winnerId}> is the last one standing and wins **${g._totalPot}** coins!`,
+            content: `💥 **BOOM!** <@${loserId}> was holding the potato and is eliminated!\n\n🏆 <@${winnerId}> is the last one standing and${winText(g, res, g._totalPot)}${noteText(res)}`,
             components: [],
           });
         }
@@ -244,7 +257,7 @@ async function handleRRShot(interaction, game, targetId) {
 
     if (game.rrActive.length === 1) {
       const winnerId = game.rrActive[0];
-      await payWinner(game, winnerId, pot);
+      const res = await payWinner(game, winnerId, pot);
 
       const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
       const finalContent = [
@@ -252,7 +265,7 @@ async function handleRRShot(interaction, game, targetId) {
         ``,
         `💥 **BANG!** <@${game.rrShooter}> ${isSelf ? 'shot themselves' : `shot <@${targetId}>`} — and it connected!`,
         ``,
-        `🏆 <@${winnerId}> is the last survivor and wins **${pot}** coins!`,
+        `🏆 <@${winnerId}> is the last survivor and${winText(game, res, pot)}${noteText(res)}`,
       ].join('\n');
       if (msg) await msg.edit({ content: finalContent, components: [] });
       deleteGame(game.id);
@@ -301,7 +314,7 @@ async function handleRRShot(interaction, game, targetId) {
 
   const survivors = game.rrActive.map(p => `<@${p}>`).join(', ');
   const content = [
-    `🔫 **Russian Roulette** — Pot: **${pot}** coins`,
+    `🔫 **Russian Roulette**${potText(game, pot)}`,
     `Survivors: ${survivors}`,
     ``,
     `*click* — <@${game.rrShooter}> shot themselves and survived! Chamber loaded: **${bullets}/6**`,
@@ -323,9 +336,9 @@ async function handleRRShot(interaction, game, targetId) {
       g.rrActive = g.rrActive.filter(p => p !== afkId);
       if (g.rrActive.length === 1) {
         const winnerId = g.rrActive[0];
-        await payWinner(g, winnerId, pot);
+        const res = await payWinner(g, winnerId, pot);
         const afkMsg = await interaction.channel.messages.fetch(g.messageId).catch(() => null);
-        if (afkMsg) await afkMsg.edit({ content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond and is eliminated!\n\n🏆 <@${winnerId}> wins **${pot}** coins!`, components: [] });
+        if (afkMsg) await afkMsg.edit({ content: `🔫 **Russian Roulette — Game Over!**\n\n⏱️ <@${afkId}> didn't respond and is eliminated!\n\n🏆 <@${winnerId}>${winText(g, res, pot)}${noteText(res)}`, components: [] });
         deleteGame(g.id);
         return;
       }
@@ -360,8 +373,8 @@ async function handleButton(interaction) {
       return interaction.reply({ content: '✅ You declined.', flags: 64 });
     }
 
-    const targetBalance = await getBalance(duel.targetId);
-    if (duel.amount > targetBalance) {
+    const targetBalance = isBet(duel.amount) ? await getBalance(duel.targetId) : 0;
+    if (isBet(duel.amount) && duel.amount > targetBalance) {
       deleteDuel(duel.id);
       return interaction.reply({ content: '❌ You no longer have enough coins.', flags: 64 });
     }
@@ -402,14 +415,13 @@ async function handleButton(interaction) {
     const flipResult = flip ? 'Heads' : 'Tails';
     const initiatorWins = duel.initiatorSide === flipResult;
     const winnerId = initiatorWins ? duel.initiatorId : duel.targetId;
-    const prize = duel.amount * 2;
 
     deleteDuel(duel.id);
-    await updateBalance(winnerId, prize);
+    const res = await settleDuel(duel, winnerId);
 
     const result = [
       `🪙 <@${duel.initiatorId}> called **${duel.initiatorSide}** — the coin landed on **${flipResult}**!`,
-      `🏆 <@${winnerId}> wins **${prize}** coins!`,
+      `🏆 <@${winnerId}>${duelWinText(duel, res)}${res.note}`,
     ].join('\n');
 
     const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
@@ -494,11 +506,10 @@ async function handleButton(interaction) {
     const client = interaction.client;
     setDuelTimeout(duel, 15 * 60 * 1000);
     duel.onExpire = async (d) => {
-      await updateBalance(d.initiatorId, d.amount);
-      await updateBalance(d.targetId, d.amount);
+      await refundStakes([d.initiatorId, d.targetId], d.amount);
       const ch = client.channels.cache.get(d.channelId);
       const m = ch ? await ch.messages.fetch(d.messageId).catch(() => null) : null;
-      if (m) await m.edit({ content: '⏱️ **Blackjack duel** timed out — both stakes have been refunded.', components: [] }).catch(() => {});
+      if (m) await m.edit({ content: isBet(d.amount) ? '⏱️ **Blackjack duel** timed out — both stakes have been refunded.' : '⏱️ **Blackjack duel** timed out.', components: [] }).catch(() => {});
     };
 
     duel.hands[duel.initiatorId].push(drawCard(duel), drawCard(duel));
@@ -620,7 +631,7 @@ async function handleButton(interaction) {
     const msg = await interaction.channel.messages.fetch(game.messageId).catch(() => null);
     if (msg) {
       await msg.edit({
-        content: `🥔 **Hot Potato!** Pot: **${game._totalPot}** coins\n<@${game.potatoHolder}> now has the potato!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
+        content: `🥔 **Hot Potato!**${potText(game, game._totalPot)}\n<@${game.potatoHolder}> now has the potato!\nRemaining: ${game.players.map(p => `<@${p}>`).join(', ')}`,
         components: [row],
       });
     }
@@ -686,20 +697,21 @@ async function handleModal(interaction) {
 
       // On a tie nothing was ever taken, so there is nothing to refund. When
       // there IS a winner, both stakes are taken now — atomically, and only
-      // if both players can still afford it.
+      // if both players can still afford it (a free duel takes nothing).
+      let res = null;
       if (winnerId) {
         const stakes = await takeDuelStakes(duel);
         if (!stakes.ok) return cancelDuelNoFunds(interaction, duel, stakes.brokeId, 'Number duel');
         deleteDuel(duel.id);
-        await updateBalance(winnerId, duel.amount * 2);
+        res = await settleDuel(duel, winnerId);
       } else {
         deleteDuel(duel.id);
       }
 
       const header = `🎯 Bot picked **${botNumber}**!\n<@${duel.initiatorId}> guessed **${duel.initiatorNumber}** (off by ${iDiff})\n<@${duel.targetId}> guessed **${duel.targetNumber}** (off by ${tDiff})\n\n`;
       const resultText = winnerId
-        ? `${header}🏆 <@${winnerId}> wins **${duel.amount * 2}** coins!`
-        : `${header}🤝 Tie! Bets refunded.`;
+        ? `${header}🏆 <@${winnerId}>${duelWinText(duel, res)}${res.note}`
+        : `${header}🤝 Tie!${isBet(duel.amount) ? ' Bets refunded.' : ''}`;
 
       const msg = await interaction.channel.messages.fetch(duel.messageId).catch(() => null);
       if (msg) await msg.edit({ content: resultText, components: [] });
