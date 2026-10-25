@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { createGame, getGame, deleteGame, isInGame, refundGame, MAX_PLAYERS, MIN_PLAYERS } = require('../../utils/economy/gameManager.js');
-const { getBalance, updateBalance, spendCoins } = require('../../utils/economy/shopManager.js');
+const { getBalance } = require('../../utils/economy/shopManager.js');
+const { isBet, takeStakes, refundStakes, canBet, betLabel, capRefusal } = require('../../utils/economy/stakes.js');
 
 const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
 
@@ -8,7 +9,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('hotpotato')
     .setDescription('Start a hot potato game — last survivor wins the pot')
-    .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
+    .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet (leave empty to play for free)').setRequired(false).setMinValue(1)),
 
   async execute(interaction) {
     if (!ALLOWED_CHANNELS.includes(interaction.channelId)) {
@@ -16,12 +17,18 @@ module.exports = {
     }
 
     const hostId = interaction.user.id;
-    const bet = interaction.options.getInteger('bet');
+    const bet = interaction.options.getInteger('bet') || 0; // 0 = free game
 
     if (isInGame(hostId)) return interaction.editReply('❌ You are already in a game.');
 
+    if (isBet(bet)) {
+      const cap = await canBet([hostId], bet);
+      if (!cap.ok) return interaction.editReply(capRefusal(hostId, false));
+    }
+
     // Take the host's stake atomically (only succeeds if they can afford it).
-    if (!(await spendCoins(hostId, bet))) {
+    // A free game takes nothing.
+    if (!(await takeStakes([hostId], bet)).ok) {
       const balance = await getBalance(hostId);
       return interaction.editReply(`❌ You only have ${balance} coins.`);
     }
@@ -36,7 +43,7 @@ module.exports = {
     let msg;
     try {
       msg = await interaction.editReply({
-        content: `🥔 **Hot Potato** — <@${hostId}> started a game!\nBet: **${bet}** coins/player | Players (1/${MAX_PLAYERS}): <@${hostId}>\n\nGame starts in **30 seconds**!`,
+        content: `🥔 **Hot Potato** — <@${hostId}> started a game!\n${betLabel(bet)} | Players (1/${MAX_PLAYERS}): <@${hostId}>\n\nGame starts in **30 seconds**!`,
         components: [row],
       });
     } catch (err) {
@@ -62,7 +69,7 @@ module.exports = {
         const origMsg = await channel?.messages.fetch(g.messageId).catch(() => null);
 
         if (g.players.length < MIN_PLAYERS) {
-          await updateBalance(hostId, bet);
+          await refundStakes([hostId], bet);
           if (origMsg) await origMsg.edit({ content: '❌ **Hot Potato** cancelled — not enough players joined.', components: [] }).catch(() => {});
           deleteGame(g.id);
           return;
