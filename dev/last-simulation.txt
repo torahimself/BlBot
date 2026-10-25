@@ -1,0 +1,100 @@
+══════════════════════════════════════════════════════════════════
+ BL ECONOMY SIMULATION   seed 7 · horizon 104 weeks
+══════════════════════════════════════════════════════════════════
+
+[1] SETTINGS UNDER TEST
+  typing   0.2/char · cap 20,000/week, 80,000/30d · ceiling 100,000 chars/week
+  voice    200–350/h · cap 12,000/week, 48,000/30d · ceiling 42 h/week
+  drops    0.0019 per roll (1/voice-min, 1/70 chars) · max 2/week
+  archetypes (eligible chars per day · voice hours per week · /work):
+    casual      400 chars/day (2,800/wk) · 1 h voice/wk · work 50% of days
+    regular   1,500 chars/day (10,500/wk) · 6 h voice/wk · work 80% of days
+    active    4,000 chars/day (28,000/wk) · 14 h voice/wk · work 90% of days
+    heavy     9,000 chars/day (63,000/wk) · 25 h voice/wk · work 100% of days
+
+[2] TIME TO 100,000 COINS (balance, nothing spent; includes milestone + drop coins)
+               text only    voice only    text + voice    text+voice+/work
+casual           > 40 wk       > 40 wk         > 40 wk             29.9 wk
+regular          36.9 wk       35.9 wk         18.6 wk             10.9 wk
+active           13.4 wk       16.4 wk          7.4 wk              5.4 wk
+heavy             6.4 wk        7.7 wk          3.7 wk              3.3 wk
+  theoretical ceiling (every cap maxed daily, potions always on, /work daily): 2.1 wk
+
+[3] MILESTONES  (time until each tier is unlocked; full text+voice+/work routine)
+⌨️  Typing tier                  chars     coins      casual     regular      active       heavy
+1. Ink Rookie                   10,000       800      3.3 wk      0.7 wk      0.3 wk      0.0 wk
+2. Keyboard Knight              30,000     1,500     10.1 wk      2.6 wk      1.0 wk      0.4 wk
+3. Wordsmith                    75,000     2,500     26.4 wk      7.1 wk      2.4 wk      1.1 wk
+4. Story Spinner               150,000     4,000     53.1 wk     14.4 wk      4.9 wk      2.1 wk
+5. Prose Paladin               300,000     7,000           —     28.6 wk      9.7 wk      4.4 wk
+6. Quill Master                500,000    11,000           —     47.3 wk     17.0 wk      7.1 wk
+7. Lorekeeper                  800,000    18,000           —     74.9 wk     27.3 wk     11.6 wk
+8. Epic Scribe               1,200,000    28,000           —           —     41.9 wk     18.0 wk
+9. Grand Chronicler          1,800,000    42,000           —           —     63.3 wk     28.1 wk
+10. Eternal Inkwell          2,500,000    65,000           —           —     87.7 wk     39.3 wk
+
+🎧 Voice tier                    hours     coins      casual     regular      active       heavy
+1. Echo Rookie                       5     1,000      6.7 wk      1.0 wk      0.3 wk      0.1 wk
+2. Lounge Regular                   15     2,000     18.4 wk      3.0 wk      0.7 wk      0.6 wk
+3. Mic Warmer                       30     3,500     30.1 wk      6.0 wk      1.7 wk      1.0 wk
+4. Frequency Rider                  60     5,500     58.6 wk     10.7 wk      3.9 wk      2.1 wk
+5. Channel Guardian                120     9,000           —     19.1 wk      8.3 wk      4.6 wk
+6. Soundwave Veteran               200    14,000           —     33.0 wk     13.9 wk      7.9 wk
+7. Voice Vanguard                  350    24,000           —     55.9 wk     24.3 wk     14.0 wk
+8. Legend of the Lobby             550    40,000           —     91.3 wk     40.3 wk     21.7 wk
+9. Harmonic Titan                  800    65,000           —           —     58.9 wk     31.4 wk
+10. Voice of the Server          1,200   100,000           —           —     88.1 wk     46.1 wk
+  "—" = not reached within the horizon.
+  typing-only (no voice): 2.5M characters reached after → casual — · regular — · active 89.7 wk · heavy 39.6 wk
+
+[4] RANDOM DROPS (full routine, whole horizon)
+             drops/week    potion    1,000c    3,000c    5,000c   potions used
+casual             0.15         8         8         0         0              8
+regular            0.83        42        36         6         2             41
+active             1.60        89        75         2         0             89
+heavy              1.92        97        94         5         4             97
+  targets: ≈ 0.8 / week for a regular member, ≈ 1.9 / week for a very active one (hard max 2).
+
+[5] CAP AUDIT (full routine, potions always used, whole horizon)
+             text wk max   text 30d max   voice wk max   voice 30d max   text chars/wk max   voice h/wk max
+casual               696          2,720          1,424           2,873               3,392              4.2
+regular            2,995         10,718          3,844          10,808              13,528             11.7
+active             7,579         27,870          6,856          21,896              37,368             21.4
+heavy             16,117         65,060         10,154          41,325              80,584             33.3
+maxed             19,998         44,014         11,908          26,024             100,000             40.1
+  limits: text 20,000/wk 80,000/30d · voice 12,000/wk 48,000/30d   →   ✅ no violations (boosts and drops never bypassed a cap)
+  regular member, 12 weeks: without potions 48,149 activity coins · with every potion used 49,466 (+3%)
+
+[6] STEADY-STATE INCOME per 30 days (weeks 12–26 of the full routine, /work included)
+    → can a member re-buy / extend the 100,000-coin 30-day role forever?
+             coins / 30 days    vs 100k role                                   verdict
+casual                14,735             15%                         cannot sustain it
+regular               38,595             39%                         cannot sustain it
+active                78,841             79%            affords it about every 6 weeks
+heavy                136,046            136%               can afford it every 30 days
+  hard ceiling on 30-day activity income: 128,000 coins (+ ~18,750 from /work)
+
+[7] BETTING (hostile gambler: 400 coin-flip duels a week at 5,000 each, wins every one)
+  net profit after 400 wins: 10,000 (cap 10,000) → ✅ capped · coins conserved in every duel: ✅
+  house game: 1 loss (−1,000) then 40 dice wins → net 10,000 (cap 10,000) → ✅; next week headroom 10,000
+
+[8] HALLOWEEN EVENT
+  scoring: 9 voice-min per point (50 pts = 7.5 h) · 320 chars per point (50 pts = 16,000 chars) · qualify at 50
+             voice pts    text pts     total    qualifies
+casual               7           8        15           0%
+regular             33          32        65          88%
+active              50          40        90         100%
+heavy               50          40        90         100%
+  (average over 40 simulated members each; the targeted outcome is ≈ 70 points for "regular")
+
+  Community with 250 participating members (mix 25% casual / 40% regular / 25% active / 10% heavy):
+    expected total ≈ 15,342 points · ≈ 175 members qualify
+tier          target    % of expected         outcome
+Bronze         9,000              59%         reached
+Silver        13,000              85%         reached
+Gold          17,000             111%     not reached
+    suggested targets for 250 participants (55% / 80% / 105% of the expected total): 8,500 / 12,500 / 16,000
+    (rerun with --members N, N = how many people really type or talk in a normal week)
+    payout if Gold is reached: 26,000 coins + 4 Typing + 4 Voice potions per qualified member → ≈ 4,550,000 coins injected for 175 members
+
+Done.
