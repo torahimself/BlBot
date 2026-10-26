@@ -143,7 +143,7 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
   });
   await t('plausible words that are not in the word list still pass (the game is not dictionary-limited)', () => {
     assert(v('سنجاب', 1, 'س').ok, 'سنجاب'); assert(v('سبانخ', 2, 'س').ok, 'سبانخ'); assert(v('سبورة', 3, 'س').ok, 'سبورة');
-    assert(v('سفيان', 0, 'س').ok, 'a rare name'); assert(v('فاكهة', 4, 'ف').ok, 'unknown words are not rejected as «not a place»');
+    assert(v('سفيان', 0, 'س').ok, 'a rare name'); assert(v('فارنا', 4, 'ف').ok, 'unknown words are not rejected as «not a place»');
   });
   await t('a real word from ANOTHER category is wrong (a car is not an animal)', () => {
     assert.strictEqual(v('سيارة', 1, 'س').reason, 'category');
