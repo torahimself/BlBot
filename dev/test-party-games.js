@@ -370,7 +370,7 @@ async function lobby(def, host, bet, ch) {
     assert(!v('اااااا', 0, 'ا'), 'repeated letter');
     assert(v('أسد', 1, 'ا')); assert(v('الأسد', 1, 'ا'), 'ال is ignored');
     assert(v('فرنسا', 4, 'ف'));
-    assert(v('فاكهة', 4, 'ف'), 'unknown but plausible words are accepted (no dictionary lock-out)');
+    assert(v('فارنا', 4, 'ف'), 'unknown but plausible words are accepted (no dictionary lock-out)');
     assert(!v('س بطيخ', 2, 'س'), 'letter + space + word');
     assert(!v('سفراولة', 2, 'س'), 'letter glued onto a real word');
     assert(!v('ضصثقفغعه', 3, 'ض'), 'keyboard mashing');
