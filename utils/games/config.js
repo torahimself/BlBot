@@ -47,9 +47,9 @@ module.exports = {
     graceAfterFirstMs: 8 * 1000, // others may still answer this long after the first correct answer
     introMs: 2500, pauseMs: 3000,
     attempts: 4,                 // tries per round to find a photo (different places)
-    bboxHalfDeg: 0.04,           // search box half-size (Mapillary limits the box area)
+    bboxHalfDeg: 0.015,           // search box half-size (Mapillary limits the box area)
     jitterDeg: 0.25,             // random offset around the city so rounds differ
-    limit: 50, httpTimeoutMs: 4000,
+    limit: 15, httpTimeoutMs: 12000,
     fetch: null,                 // tests inject a fake here
   },
   mafia:      { min: 5, max: 12, nightMs: 35 * 1000, talkMs: 45 * 1000, voteMs: 30 * 1000 },
