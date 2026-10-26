@@ -19,7 +19,9 @@ let fetchOverride = null;
 function setFetch(fn) { fetchOverride = fn; }
 const doFetch = () => fetchOverride || g.fetch || globalThis.fetch;
 
-const token = () => process.env.MAPILLARY_TOKEN || g.mapillaryToken || '';
+// Trim spaces/newlines and one pair of quotes that sometimes get pasted along with the token.
+const tidy = (v) => String(v || '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+const token = () => tidy(process.env.MAPILLARY_TOKEN) || tidy(g.mapillaryToken);
 const isConfigured = () => !!token();
 const NOT_CONFIGURED = '⚙️ لعبة **جيو** غير مفعّلة بعد — المطوّر يحتاج إضافة مفتاح Mapillary (انظر GEO_SETUP.md).';
 
