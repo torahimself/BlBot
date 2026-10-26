@@ -46,8 +46,14 @@ function buildUrl(tok, bbox) {
 
 async function queryImages(bbox) {
   const f = doFetch();
-  const res = await f(buildUrl(token(), bbox), { signal: AbortSignal.timeout ? AbortSignal.timeout(g.httpTimeoutMs) : undefined });
-  if (!res || !res.ok) throw new Error(`Mapillary HTTP ${res && res.status}`);
+  const t0 = Date.now();
+  let res;
+  try {
+    res = await f(buildUrl(token(), bbox), { signal: AbortSignal.timeout ? AbortSignal.timeout(g.httpTimeoutMs) : undefined });
+  } catch (err) {
+    throw new Error(`${err.message} (after ${Date.now() - t0} ms, bbox ${bbox.map(n => n.toFixed(3)).join(',')})`);
+  }
+  if (!res || !res.ok) throw new Error(`Mapillary HTTP ${res && res.status} (${Date.now() - t0} ms)`);
   const body = await res.json();
   if (body && body.error) throw new Error(`Mapillary: ${body.error.message || 'error'}`);
   return (body && body.data ? body.data : []).filter(im => im && im.id && im.thumb_1024_url);
