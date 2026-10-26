@@ -361,7 +361,7 @@ async function lobby(def, host, bet, ch) {
   });
 
   console.log('إنسان حيوان نبات جماد بلاد');
-  await t('answer validation', () => {
+  await t('answer validation (details: dev/test-categories.js)', () => {
     const v = cats.validAnswer;
     assert(v('أحمد', 0, 'ا')); assert(v('احمد', 0, 'ا'));
     assert(!v('محمد', 0, 'ا'), 'wrong letter');
@@ -369,60 +369,46 @@ async function lobby(def, host, bet, ch) {
     assert(!v('', 0, 'ا')); assert(!v('ا', 0, 'ا'), 'single letter');
     assert(!v('اااااا', 0, 'ا'), 'repeated letter');
     assert(v('أسد', 1, 'ا')); assert(v('الأسد', 1, 'ا'), 'ال is ignored');
-    assert(v('فرنسا', 4, 'ف')); assert(!v('فاكهة', 4, 'ف'), 'بلاد must be a real place');
+    assert(v('فرنسا', 4, 'ف'));
+    assert(v('فاكهة', 4, 'ف'), 'unknown but plausible words are accepted (no dictionary lock-out)');
+    assert(!v('س بطيخ', 2, 'س'), 'letter + space + word');
+    assert(!v('سفراولة', 2, 'س'), 'letter glued onto a real word');
     assert(!v('ضصثقفغعه', 3, 'ض'), 'keyboard mashing');
   });
-  await t('scoring: 10 unique / 5 shared / 0 invalid, totals add up', () => {
-    const answers = new Map([
-      ['p1', ['أحمد', 'أسد', 'أرز', 'أريكة', 'أمريكا']],
-      ['p2', ['أحمد', 'أرنب', 'أرز', '', 'اسبانيا']],
-      ['p3', ['بدر', 'أسد', 'إجاص', 'أرض', 'الاردن']],
-    ]);
-    const r = cats.scoreRound(answers, 'ا');
-    assert.strictEqual(r.get('p1').cells[0].pts, 5, 'shared name');
-    assert.strictEqual(r.get('p1').cells[1].pts, 5, 'shared with p3');
-    assert.strictEqual(r.get('p1').cells[2].pts, 5, 'shared نبات');
-    assert.strictEqual(r.get('p1').cells[3].pts, 10, 'unique');
-    assert.strictEqual(r.get('p1').cells[4].pts, 10);
-    assert.strictEqual(r.get('p1').total, 35);
-    assert.strictEqual(r.get('p2').total, 5 + 10 + 5 + 0 + 10);
-    assert.strictEqual(r.get('p3').cells[0].pts, 0, 'wrong letter');
-    assert.strictEqual(r.get('p3').total, 0 + 5 + 10 + 10 + 10);
+  await t('turn-based design: 5 categories, no modal form, only the quit button exists', async () => {
     assert.strictEqual(cats.CATS.length, 5);
-  });
-  await t('the form has exactly 5 inputs and is Arabic', () => {
-    const s = { id: 'x', data: { round: { letter: 'م', answers: new Map(), ended: false } } };
+    assert.strictEqual(cfg.categories.rounds, 5, 'five letters');
+    assert.strictEqual(cfg.categories.turnMs, 15000, '15 s per turn');
+    assert.strictEqual(cfg.categories.pointsCorrect, 10);
     const it = mkClick('A', 'pg:x:answer');
-    s.players = new Map([['A', {}]]);
-    return cats.onComponent(s, it, 'answer').then(() => {
-      const json = it.modal.toJSON();
-      assert.strictEqual(json.components.length, 5);
-      assert(json.custom_id.startsWith('pg:x:m:'));
-    });
+    await cats.onComponent({ players: new Map([['A', {}]]), data: {} }, it, 'answer');
+    assert(!it.modal, 'no modal any more');
+    assert(it.replies[0] && it.replies[0].flags === 64, 'stale button is refused privately');
   });
-  await t('full round through handleInteraction: submit → scored → winner paid', async () => {
+  await t('full game through the lobby: bet 200, A answers, B is silent → A scores, wins the pot', async () => {
     await resetPlayers('A', 'B');
-    const c = cfg.categories; const keep = { ...c }; c.rounds = 1; c.roundMs = 3000; c.stopMs = 300;
+    const c = cfg.categories; const keep = JSON.parse(JSON.stringify(c));
+    Object.assign(c, { rounds: 1, turnMs: 80, introMs: 0, pauseMs: 0, betweenTurnsMs: 0, roundPauseMs: 0, maxAttempts: null, maxIdleCategories: 99 });
+    c.letters.splice(0, c.letters.length, 'م');
     const ch = mkChannel(); await games.handleMessage(mkMessage(ch, 'A', '.انسان 200'));
     const s = session.sessionInChannel(ch.id);
     await click('B', s, 'join'); cfg.lobby.autoStartMs = 20; s.checkAutoStart();
-    for (let i = 0; i < 80 && !(s.data.round && !s.data.round.ended); i++) await sleep(100);
-    const L = s.data.round.letter;
-    const word = { 'ا': ['أحمد', 'أسد', 'أرز', 'أرض', 'الاردن'], 'م': ['محمد', 'مها', 'موز', 'مفتاح', 'مصر'] }[L];
-    const submit = (uid, arr) => {
-      const it = mkClick(uid, `pg:${s.id}:m:answer`, { fields: { getTextInputValue: (k) => arr[Number(k.slice(1))] || '' } });
-      return games.handleInteraction(it).then(() => it);
-    };
-    const first = await submit('A', word ? word : ['x', '', '', '', '']);
-    assert(first.replies.length === 1);
-    const dup = await submit('A', ['x', '', '', '', '']); assert(/بالفعل/.test(dup.replies[0].content));
-    await submit('B', ['', '', '', '', '']);
-    for (let i = 0; i < 100 && session.sessions.size; i++) await sleep(100);
-    Object.assign(c, keep);
-    assert.strictEqual(session.sessions.size, 0);
+    const bank = ['محمد', 'ماعز', 'موز', 'مفتاح', 'مصر'];
+    const seen = new Set();
+    for (let i = 0; i < 600 && session.sessions.size; i++) {
+      const turn = s.data && s.data.turn;
+      if (turn && turn.active && !turn.resolved && !seen.has(turn)) {
+        seen.add(turn);
+        if (turn.userId === 'A') await games.handleMessage(mkMessage(ch, 'A', bank[turn.ci]));
+        else await games.handleMessage(mkMessage(ch, 'B', 'xyz'));      // wrong → another player gets the category
+      }
+      await sleep(5);
+    }
+    Object.assign(c, keep); c.letters.splice(0, c.letters.length, ...keep.letters);
+    assert.strictEqual(session.sessions.size, 0, 'game finished');
     const a = await bal('A'), b = await bal('B');
     assert.strictEqual(a + b, 20000, 'conserved');
-    if (word) { assert.strictEqual(a, 10200); assert.strictEqual(b, 9800); }
+    assert.strictEqual(a, 10200); assert.strictEqual(b, 9800);
   });
 
   console.log('Stats');
