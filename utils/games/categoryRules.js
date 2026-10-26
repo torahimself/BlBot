@@ -42,6 +42,31 @@ function keyOf(text) {
 const SETS = CATS.map((cat) => new Set((LEXICON[cat] || []).map(keyOf).filter(Boolean)));
 for (const c of COUNTRIES) { SETS[4].add(keyOf(c.ar)); SETS[4].add(keyOf(c.capAr)); }
 const ANY = new Set(SETS.flatMap(s => [...s]));
+// Words of the four non-name categories: used to spot a misspelling of a known word.
+const KNOWN = [...new Set([1, 2, 3, 4].flatMap(j => [...SETS[j]]))];
+
+// true when a and b differ by exactly ONE typo: a replaced, missing, extra or swapped letter.
+function oneTypoApart(a, b) {
+  if (a === b) return false;
+  const x = [...a], y = [...b];
+  const dl = x.length - y.length;
+  if (Math.abs(dl) > 1) return false;
+  let i = 0;
+  while (i < x.length && i < y.length && x[i] === y[i]) i++;
+  if (dl === 0) {
+    if (x.slice(i + 1).join('') === y.slice(i + 1).join('')) return true;                          // one letter replaced
+    return x[i] === y[i + 1] && x[i + 1] === y[i] && x.slice(i + 2).join('') === y.slice(i + 2).join(''); // two swapped
+  }
+  const [long, short] = dl > 0 ? [x, y] : [y, x];
+  return long.slice(i + 1).join('') === short.slice(i).join('');                                    // one letter missing/extra
+}
+
+/** A known word this answer is probably a misspelling of (same first letter), or null. */
+function nearMiss(key) {
+  if ([...key.replace(/\s/g, '')].length < 4) return null;
+  for (const w of KNOWN) if (w[0] === key[0] && oneTypoApart(key, w)) return w;
+  return null;
+}
 const inLexicon = (key, i) => SETS[i].has(key);
 
 /**
@@ -68,7 +93,8 @@ function validate(text, i, letter, opts = {}) {
 
   const key = keyOf(t);
   const letters = key.replace(/\s/g, '');
-  if (letters.length < 2) return { ok: false, reason: 'short' };
+  // Very short words («دي») only count when they are really in this category's list.
+  if (letters.length < 2 || (letters.length < 3 && !inLexicon(key, i))) return { ok: false, reason: 'short' };
   if (key.length > 25) return { ok: false, reason: 'long' };
 
   // junk: the same letter 3+ times in a row, one repeated letter, keyboard runs
@@ -88,6 +114,12 @@ function validate(text, i, letter, opts = {}) {
   // animal) is wrong. Names (إنسان) are left alone: many names are also words.
   if (crossCheck && i !== 0) {
     for (const j of [1, 2, 3, 4]) if (j !== i && inLexicon(key, j) && !inLexicon(key, i)) return { ok: false, reason: 'category', key };
+  }
+
+  // Misspelling: one letter away from a word we know («دماي» for «دمام») is wrong, not a new word.
+  if (i !== 0 && !inLexicon(key, i)) {
+    const near = nearMiss(key);
+    if (near) return { ok: false, reason: 'typo', key, suggestion: near };
   }
 
   // Fabrication: the letter glued onto a real word («س» + «فراولة»).
@@ -111,6 +143,7 @@ const REASONS_AR = {
   fabricated: 'كلمة غير صحيحة',
   category: 'لا تنتمي إلى هذه الفئة',
   dup: 'هذه الإجابة استُخدمت من قبل',
+  typo: 'خطأ إملائي — الكلمة غير مكتوبة بشكل صحيح',
 };
 
 module.exports = { validate, keyOf, CATS, REASONS_AR, inLexicon, SETS };
