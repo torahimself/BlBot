@@ -103,6 +103,14 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     assert.strictEqual(v('س بطيخ', 2, 'س').ok, false);
     assert.strictEqual(v('س بطيخ', 2, 'س').reason, 'single');
   });
+  await t('a one-letter misspelling of a known word is rejected (دماي for دمام, تفاخ for تفاح) with a suggestion', () => {
+    const a = v('دماي', 4, 'د'); assert.strictEqual(a.ok, false); assert.strictEqual(a.reason, 'typo'); assert.strictEqual(a.suggestion, 'دمام');
+    assert.strictEqual(v('تفاخ', 2, 'ت').reason, 'typo');
+    assert.strictEqual(v('دمام', 4, 'د').ok, true);
+  });
+  await t('a 2-letter word that is not in the list («دي») is rejected', () => {
+    assert.strictEqual(v('دي', 0, 'د').ok, false);
+  });
   await t('«سفراولة» (the letter glued onto a real word) is rejected as fabricated', () => {
     const r = v('سفراولة', 2, 'س');
     assert(!r.ok && r.reason === 'fabricated', JSON.stringify(r));
