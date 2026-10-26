@@ -139,7 +139,7 @@ function onMessage(s, message) {
     s.data.used.add(v.key);                                     // reserved immediately: nobody can reuse it
     turn.settle({ kind: 'correct', answer: v.answer, key: v.key });
   } else {
-    turn.settle({ kind: 'wrong', reason: v.reason });
+    turn.settle({ kind: 'wrong', reason: v.reason, suggestion: v.suggestion });
   }
 }
 
@@ -201,7 +201,7 @@ async function playCategory(s, ci, letter) {
       await s.channel.send({ content: `✅ ${s.mention(uid)} إجابة صحيحة: **${r.answer}** (+${c.pointsCorrect})`, allowedMentions: { parse: [] } }).catch(() => {});
       return 'done';
     }
-    const why = r.kind === 'timeout' ? '⌛ انتهى الوقت!' : `❌ إجابة غير صحيحة — ${rules.REASONS_AR[r.reason] || 'غير مقبولة'}.`;
+    const why = r.kind === 'timeout' ? '⌛ انتهى الوقت!' : `❌ إجابة غير صحيحة — ${rules.REASONS_AR[r.reason] || 'غير مقبولة'}${r.suggestion ? ` (هل تقصد «${r.suggestion}»؟)` : ''}.`;
     const more = attempts < max && eligibleIds(s).length >= 2;
     await s.channel.send({ content: `${s.mention(uid)} ${why}${more ? ' ننتقل للاعب آخر لنفس الفئة…' : ''}`, allowedMentions: { parse: [] } }).catch(() => {});
     await sleep(c.betweenTurnsMs);
