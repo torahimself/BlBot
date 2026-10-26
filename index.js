@@ -1,4 +1,12 @@
 require('dotenv').config();
+
+// Explains (without printing any value) why a token might not be read from .env.
+const envCheck = require('./utils/envCheck').run();
+if (!envCheck.ok) {
+    console.error('❌ The bot cannot log in without BOT_TOKEN. Fix the .env file as described above and restart.');
+    process.exit(1);
+}
+
 const fs = require('fs');
 const path = require('path');
 
