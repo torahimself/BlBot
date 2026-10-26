@@ -96,7 +96,12 @@ function mkClick(userId, customId, extra = {}) {
     update: async (o) => { it.updated = o; }, ...extra };
   return it;
 }
-const click = (userId, s, action, extra) => { const it = mkClick(userId, `pg:${s.id}:${action}`, extra); return games.handleInteraction(it).then(() => it); };
+// Roulette components carry the turn number; the helper adds the CURRENT one unless the action already has ":<n>".
+const click = (userId, s, action, extra) => {
+  const tok = /^r/.test(action) && !action.includes(':') && s.data && s.data.turn ? `:${s.data.turn.n}` : '';
+  const it = mkClick(userId, `pg:${s.id}:${action}${tok}`, extra);
+  return games.handleInteraction(it).then(() => it);
+};
 const bal = (id) => getBalance(id);
 async function setBal(id, v) { await dbx.run('INSERT INTO users (userId, balance) VALUES (?, ?) ON CONFLICT(userId) DO UPDATE SET balance = ?', [id, v, v]); await dbx.run('DELETE FROM bet_net WHERE userId = ?', [id]); }
 async function waitFor(fn, ms = 3000) { const end = Date.now() + ms; while (Date.now() < end) { const v = fn(); if (v) return v; await sleep(5); } throw new Error('timeout waiting'); }
@@ -286,10 +291,10 @@ async function newGame(host, others, bet, rngValues) {
   const P = ['ra', 'rb', 'rc', 'rd'];
   for (const id of P) await setBal(id, 1000);
 
-  await t('free 3-player game: pick kick, then leave', async () => {
+  await t('free 3-player game: targeted kick, then the last two → the wheel pick wins automatically', async () => {
     const { s, ch } = await newGame('ra', ['rb', 'rc'], 0, [0, 0]);
     const run = s.start();
-    let turn = await waitTurn(s);
+    const turn = await waitTurn(s);
     assert.strictEqual(turn.chosen, 'ra');
     // Not the chosen player: refused, nothing changes.
     const intruder = await click('rb', s, 'rleave');
@@ -298,43 +303,78 @@ async function newGame(host, others, bet, rngValues) {
     const intruderSel = await click('rc', s, 'rsel', { values: ['ra'] });
     assert(intruderSel.replies[0] && intruderSel.replies[0].flags === 64);
     assert(s.data.alive.size === 3);
-    // Chosen player opens the private menu, kicks rb.
+    // Chosen player opens the private menu — it lists ONLY the others — and kicks rb.
     const menu = await click('ra', s, 'rkick');
     assert.strictEqual(menu.replies[0].flags, 64, 'menu is ephemeral');
     const opts = menu.replies[0].components[0].components[0].options;
-    assert.deepStrictEqual(opts.map(o => (o.data || o).value).sort(), ['rb', 'rc'], 'menu lists only the OTHER alive players');
+    assert.deepStrictEqual(opts.map(o => (o.data || o).value).sort(), ['rb', 'rc'], 'menu lists only the OTHER alive players (never the chooser)');
+    // A forged selection of himself is refused and does not resolve the turn.
+    const self = await click('ra', s, 'rsel', { values: ['ra'] });
+    assert(self.updated && /غير متاح/.test(self.updated.content) && !s.data.turn.resolved, 'cannot pick himself');
     const sel = await click('ra', s, 'rsel', { values: ['rb'] });
     assert(sel.updated && /rb/.test(sel.updated.content));
-    await waitFor(() => s.data.alive.size === 2 && s.data.turn && s.data.turn !== turn && s.data.turn.chosen);
-    assert(!s.data.alive.has('rb'));
-    // Round 2: chosen = first alive = ra → leaves → rc wins.
-    turn = s.data.turn;
-    assert.strictEqual(turn.chosen, 'ra');
-    await click('ra', s, 'rleave');
-    await run;
+    await run;                                                     // ra + rc left → wheel picks → automatic win
     assert.strictEqual(s.status, 'done');
+    assert(!s.data.alive.has('rb'));
+    assert.deepStrictEqual([...s.data.alive], ['ra'], 'ra (picked by the wheel with rng 0) wins');
     const text = ch.sent.map(m => m.content || '').join('\n');
-    assert(/انسحب/.test(text) && /الفائز/.test(text) && /<@rc>/.test(text), 'announcements');
+    assert(/يفوز تلقائيًا/.test(text) && /الفائز/.test(text) && /<@ra>/.test(text), 'announcements');
     for (const id of ['ra', 'rb', 'rc']) assert.strictEqual(await bal(id), 1000, id + ' balance untouched');
-    const st = await stats.forUser('rc');
-    assert(st.find(r => r.game === 'roulette' && r.plays === 1 && r.wins === 1), 'win recorded');
+    const st = await stats.forUser('ra');
+    assert(st.find(r => r.game === 'roulette' && r.plays >= 1 && r.wins >= 1), 'win recorded');
     const st2 = await stats.forUser('rb');
-    assert(st2.find(r => r.game === 'roulette' && r.plays === 1 && r.wins === 0), 'play recorded for an eliminated player');
+    assert(st2.find(r => r.game === 'roulette' && r.plays >= 1), 'play recorded for an eliminated player');
   });
 
-  await t('random kick uses the rng and never kicks the chooser', async () => {
-    // Round 1 chosen: rng 0 → ra. Random kick: rng 0.99 → last of the others = rc.
-    // Round 2 (ra, rb): chosen rng 0.99 → rb; random kick → ra (only other).
-    const { s } = await newGame('ra', ['rb', 'rc'], 0, [0, 0.99, 0.99, 0]);
+  await t('forfeit (انسحاب): the chooser leaves, never somebody else', async () => {
+    const { s, ch } = await newGame('ra', ['rb', 'rc'], 0, [0, 0]);
+    const run = s.start();
+    await waitTurn(s);
+    await click('ra', s, 'rleave');
+    await run;
+    assert(!s.data.alive.has('ra') && s.data.alive.has('rb') && s.data.alive.has('rc') === false || s.data.alive.size === 1, 'ra left');
+    assert(!s.data.alive.has('ra'));
+    assert(ch.sent.some(m => /انسحب/.test(m.content || '')), 'forfeit announced');
+  });
+
+  await t('random kick never kicks the chooser (60 games with different rng values)', async () => {
+    for (let i = 0; i < 60; i++) {
+      const v = (i % 20) / 20 + 0.01;
+      // chooser: first alive (rng 0); the random kick uses rng v.
+      const { s } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, v, 0]);
+      const run = s.start();
+      await waitTurn(s);
+      await click('ra', s, 'rrand');
+      await waitFor(() => s.data.alive.size === 3);
+      assert(s.data.alive.has('ra'), 'ra (chooser) was not kicked, game ' + i);
+      await s.abort('done'); await run;
+    }
+  });
+
+  await t('random kick uses the rng', async () => {
+    // 3 players: chosen rng 0 → ra. Random kick rng 0.99 → last of the others = rc. Then 2 left → rng 0.99 → rb wins.
+    const { s } = await newGame('ra', ['rb', 'rc'], 0, [0, 0.99, 0.99]);
     const run = s.start();
     await waitTurn(s);
     await click('ra', s, 'rrand');
-    await waitFor(() => s.data.alive.size === 2 && s.data.turn);
-    assert(s.data.alive.has('ra') && s.data.alive.has('rb') && !s.data.alive.has('rc'), 'rc was kicked');
-    assert.strictEqual(s.data.turn.chosen, 'rb');
-    await click('rb', s, 'rrand');
     await run;
-    assert.deepStrictEqual([...s.data.alive], ['rb'], 'rb is the last one left');
+    assert(!s.data.alive.has('rc'), 'rc was kicked');
+    assert.deepStrictEqual([...s.data.alive], ['rb'], 'rb won automatically');
+  });
+
+  await t('two players left: no buttons are ever built, the wheel pick wins automatically', async () => {
+    const { s, ch } = await newGame('ra', ['rb', 'rc'], 0, [0, 0.99]);
+    const run = s.start();
+    await waitTurn(s);
+    const before = ch.sent.length;
+    await click('ra', s, 'rleave');                                // 3 → 2
+    await run;
+    const lastRound = ch.sent.slice(before).filter(m => m.files && m.files.length);
+    assert.strictEqual(lastRound.length, 1, 'one final wheel');
+    assert(!lastRound[0].components || lastRound[0].components.length === 0, 'no buttons on the final wheel');
+    assert.strictEqual(s.data.turn, null, 'no turn was opened');
+    assert.deepStrictEqual([...s.data.alive], ['rc'], 'rng 0.99 picks the second of (rb, rc)');
+    assert(/يفوز تلقائيًا/.test(ch.sent.map(m => m.content || '').join('\n')));
   });
 
   await t('15 s timeout (shortened) → the CHOSEN player is kicked, nobody else', async () => {
@@ -343,13 +383,74 @@ async function newGame(host, others, bet, rngValues) {
     const run = s.start();
     const turn = await waitTurn(s);
     const chooser = turn.chosen;
-    await waitFor(() => s.data.alive.size === 2, 2000);       // nobody clicks
+    await waitFor(() => s.data.alive.size <= 2, 2000);          // nobody clicks
     assert(!s.data.alive.has(chooser), 'the chooser was kicked on timeout');
+    assert(s.data.alive.has('rb') && s.data.alive.has('rc') || s.data.alive.size === 1, 'nobody else was kicked in that turn');
     assert(ch.sent.some(m => /لم يرد/.test(m.content || '')), 'timeout announced');
-    await waitTurn(s); await waitFor(() => s.data.alive.size === 1, 2000);
     await run;
     assert.strictEqual(s.status, 'done');
   });
+
+  await t('the 15 s start only after the wheel stops (spin length is added)', async () => {
+    const keep = wheel.render;
+    wheel.render = async (a, o) => ({ ...(await keep(a, o)), spinMs: 300 });
+    try {
+      const { s } = await newGame('ra', ['rb', 'rc'], 0, [0, 0]);
+      const t0 = Date.now();
+      const run = s.start();
+      await waitTurn(s);
+      await waitFor(() => s.data.turn === null, 3000);
+      const dt = Date.now() - t0;
+      assert(dt >= 300 + cfg.roulette.pickMs - 50, 'turn lasted spin + pick time: ' + dt);
+      await s.abort('done'); await run;
+    } finally { wheel.render = keep; }
+  });
+
+  await t('race: a click and the timeout at the same moment resolve the turn exactly once', async () => {
+    const { s, ch } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, 0, 0, 0]);
+    const run = s.start();
+    const turn = await waitTurn(s);
+    const outcomes = await Promise.all([
+      Promise.resolve(turn.resolve({ kind: 'timeout' })),
+      click('ra', s, 'rleave').then(() => 'click'),
+      Promise.resolve(turn.resolve({ kind: 'leave' })),
+    ]);
+    assert.strictEqual(outcomes[0], true); assert.strictEqual(outcomes[2], false, 'second resolve is refused');
+    await waitFor(() => s.data.alive.size === 3 && s.data.turn && s.data.turn !== turn, 2000);
+    assert(!s.data.alive.has('ra'), 'only the chooser went out, exactly once');
+    const kicks = ch.sent.filter(m => /خرج من اللعبة/.test(m.content || '') && /المتبقون: 3/.test(m.content));
+    assert.strictEqual(kicks.length, 1, 'one elimination message for that turn');
+    await s.abort('done'); await run;
+  });
+
+  await t('stale buttons from an earlier turn are refused and do nothing', async () => {
+    const { s } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, 0, 0, 0]);
+    const run = s.start();
+    const turn1 = await waitTurn(s);
+    const oldToken = turn1.n;
+    await click('ra', s, 'rleave');                                // ra out, round 2 opens (chosen rb)
+    await waitFor(() => s.data.turn && s.data.turn !== turn1);
+    const turn2 = s.data.turn;
+    assert.strictEqual(turn2.chosen, 'rb');
+    const stale = await click('rb', s, `rleave:${oldToken}`);        // old button, right user
+    assert(stale.replies[0] && stale.replies[0].flags === 64 && /انتهى/.test(stale.replies[0].content), 'ephemeral refusal');
+    assert(!turn2.resolved && s.data.alive.size === 3, 'current turn untouched');
+    const noToken = await click('rb', s, 'rleave:');
+    assert(noToken.replies[0] && !turn2.resolved, 'token-less button refused');
+    await s.abort('done'); await run;
+  });
+
+  await t('a player who left the server is dropped before the next round', async () => {
+    const { s, ch } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, 0, 0]);
+    ch.guild = { members: { fetch: async (id) => { if (id === 'rb') { const e = new Error('Unknown Member'); e.code = 10007; throw e; } return {}; } } };
+    const run = s.start();
+    await waitTurn(s);
+    assert(!s.data.alive.has('rb') && s.data.alive.size === 3, 'rb dropped, 3 left');
+    assert(ch.sent.some(m => /غادر السيرفر/.test(m.content || '')), 'announced');
+    assert.notStrictEqual(s.data.turn.chosen, 'rb');
+    await s.abort('done'); await run;
+  });
+
   await t('production pick time is 15 s', () => {
     delete require.cache[require.resolve(path.join(root, 'utils/games/config.js'))];
     const fresh = require(path.join(root, 'utils/games/config.js'));
@@ -358,30 +459,43 @@ async function newGame(host, others, bet, rngValues) {
     require.cache[require.resolve(path.join(root, 'utils/games/config.js'))].exports = cfg;
   });
 
-  await t('stale / late clicks after the decision are refused', async () => {
-    const { s } = await newGame('ra', ['rb', 'rc'], 0, [0, 0, 0]);
+  await t('late clicks after the decision are refused', async () => {
+    const { s } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, 0, 0, 0]);
     const run = s.start();
     const turn = await waitTurn(s);
+    const tok = turn.n;
     await click('ra', s, 'rrand');
-    const late = await click('ra', s, 'rleave');
+    const late = await click('ra', s, `rleave:${tok}`);
     assert(late.replies[0] && late.replies[0].flags === 64, 'second click refused');
-    await waitFor(() => s.data.turn && s.data.turn !== turn);
-    await click('ra', s, 'rleave');
-    await run;
+    await s.abort('done'); await run;
   });
 
-  await t('the wheel message carries the GIF, a numbered/coloured player list and the buttons', async () => {
+  await t('the FIRST message of a turn already has the mention, the GIF, the legend and all three buttons', async () => {
     const { s, ch } = await newGame('ra', ['rb', 'rc'], 0, [0, 0, 0]);
     const run = s.start();
     await waitTurn(s);
     const m = ch.sent.find(x => x.files && x.files[0] && x.files[0].name === 'wheel.gif');
     assert(m, 'wheel message with attachment');
+    assert.strictEqual(m.content, '<@ra>', 'the chosen player is mentioned in that same message');
+    assert.deepStrictEqual(m.allowedMentions, { users: ['ra'] }, 'and only he is pinged');
     const desc = m.embeds[0].data ? m.embeds[0].data.description : m.embeds[0].description;
     assert(/\*\*1\*\* – 🔴 أحمر – <@ra>/.test(desc) && /\*\*2\*\* – 🔵 أزرق – <@rb>/.test(desc) && /\*\*3\*\* – 🟢 أخضر – <@rc>/.test(desc), desc);
+    assert(/<t:\d+:R>/.test(desc), 'live Discord timestamp');
+    assert.strictEqual(m.components.length, 1, 'components are in the original send (no edit needed)');
     const row = m.components[0].components.map(c => c.data.label);
     assert.deepStrictEqual(row, ['طرد لاعب', 'طرد عشوائي', 'انسحاب']);
-    await click('ra', s, 'rleave'); await waitTurn(s); await click('rb', s, 'rleave').catch(() => {});
+    assert(m.components[0].components.every(c => !c.data.disabled), 'buttons are enabled');
     await s.abort('test over'); await run;
+  });
+
+  await t('after the decision the buttons of that turn are disabled', async () => {
+    const { s, ch } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, 0, 0, 0]);
+    const run = s.start();
+    await waitTurn(s);
+    const m = ch.sent.find(x => x.files && x.files[0]);
+    await click('ra', s, 'rleave');
+    await waitFor(() => m.components[0].components.every(c => c.data.disabled));
+    await s.abort('done'); await run;
   });
 
   await t('the wheel gets every player\'s name and avatar URL (and survives players without one)', async () => {
@@ -405,15 +519,12 @@ async function newGame(host, others, bet, rngValues) {
     const { s } = await newGame('ra', ['rb', 'rc'], 100, [0, 0]);
     assert.strictEqual(await bal('ra'), 900); assert.strictEqual(await bal('rb'), 900); assert.strictEqual(await bal('rc'), 900);
     const run = s.start();
-    await waitTurn(s); await click('ra', s, 'rleave');            // ra out
-    await waitFor(() => s.data.alive.size === 2 && s.data.turn);
-    // alive = rb, rc → chosen rng 0 → rb; rb leaves → rc wins
-    assert.strictEqual(s.data.turn.chosen, 'rb');
-    await click('rb', s, 'rleave');
+    await waitTurn(s); await click('ra', s, 'rleave');            // ra out → rb, rc left: rng 0 picks rb → automatic win
     await run;
-    assert.strictEqual(await bal('rc'), 900 + 300, 'winner takes the pot');
-    assert.strictEqual(await bal('ra'), 900); assert.strictEqual(await bal('rb'), 900);
-    assert.strictEqual((await bal('ra')) + (await bal('rb')) + (await bal('rc')), 3000 - 0, 'total coins unchanged');
+    assert.deepStrictEqual([...s.data.alive], ['rb']);
+    assert.strictEqual(await bal('rb'), 900 + 300, 'winner takes the pot');
+    assert.strictEqual(await bal('ra'), 900); assert.strictEqual(await bal('rc'), 900);
+    assert.strictEqual((await bal('ra')) + (await bal('rb')) + (await bal('rc')), 3000, 'total coins unchanged');
     const left = await dbx.all('SELECT * FROM party_stakes WHERE sessionId = ?', [s.id]);
     assert.strictEqual(left.length, 0, 'stake ledger cleared');
   });
