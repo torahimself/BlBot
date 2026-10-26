@@ -53,6 +53,17 @@ module.exports = {
     fetch: null,                 // tests inject a fake here
   },
   mafia:      { min: 5, max: 12, nightMs: 35 * 1000, talkMs: 45 * 1000, voteMs: 30 * 1000 },
-  categories: { min: 2, max: 8,  roundMs: 70 * 1000, stopMs: 20 * 1000, rounds: 5,
-                pointsUnique: 10, pointsDuplicate: 5 },
+  categories: {
+    min: 2, max: 8,
+    rounds: 5,                    // letters per game (one letter per round, all 5 categories each)
+    turnMs: 15 * 1000,            // time a picked player has to type an answer
+    pointsCorrect: 10,
+    maxAttempts: null,            // tries per category before «لم يُجَب»; null = min(maxAttemptsCap, max(4, 2 × players))
+    maxAttemptsCap: 8,
+    maxIdleCategories: 3,         // this many unanswered categories in a row → the game ends
+    crossCheck: true,             // reject a real word that belongs to another category (a car as an animal)
+    // Letters a round may use (hard letters ث ذ ز ض ط ظ غ و ي ه ء are left out on purpose).
+    letters: ['ا', 'ب', 'ت', 'ج', 'ح', 'خ', 'د', 'ر', 'س', 'ش', 'ص', 'ع', 'ف', 'ق', 'ك', 'ل', 'م', 'ن'],
+    introMs: 2500, pauseMs: 1500, betweenTurnsMs: 1200, roundPauseMs: 4000,
+  },
 };
