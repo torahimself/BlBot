@@ -11,8 +11,11 @@
 //   4. the first word is not just the letter on its own («س بطيخ»);
 //   5. it is not fabricated by gluing the letter onto a real word («سفراولة»);
 //   6. it was not already given in this game.
-// Words in the lexicon (data/lexicon.js) are accepted straight away; any other
-// plausible Arabic word is accepted too, so the game is never dictionary-limited.
+// Words in the lexicon (data/lexicon.js) for THIS category are accepted straight away.
+// Any other answer is not guessed at: validate() returns {ok:true, vote:true, dict, suggestion}
+// and the game asks the other players to confirm it (see categories.js). `dict` says whether it
+// is a real Arabic word (data/arwords.txt, ~255k words) — it breaks a tie / a vote nobody cast.
+// A one-letter misspelling of a known word is only a `suggestion`, never a rejection.
 
 const { foldLetters } = require('./arabic.js');
 const { hasKeyboardRun } = require('../economy/engine/textFilter.js');
@@ -45,6 +48,32 @@ const ANY = new Set(SETS.flatMap(s => [...s]));
 // Words of the four non-name categories: used to spot a misspelling of a known word.
 const KNOWN = [...new Set([1, 2, 3, 4].flatMap(j => [...SETS[j]]))];
 
+// ── general Arabic dictionary (lazy: only read the first time an unknown word shows up) ──────────
+let DICT = null;
+function dict() {
+  if (DICT) return DICT;
+  try {
+    DICT = new Set(require('fs').readFileSync(require('path').join(__dirname, 'data', 'arwords.txt'), 'utf8').split('\n').filter(Boolean));
+  } catch (err) {
+    console.error('[Categories] arwords.txt missing — unknown words are judged by vote only:', err.message);
+    DICT = new Set();
+  }
+  return DICT;
+}
+const PROCLITICS = ['و', 'ف', 'ب', 'ك', 'ل', 'وال', 'فال', 'بال', 'كال', 'لل'];
+/** One word (folded, without «ال») is a real Arabic word. */
+function isWord(w) {
+  const d = dict();
+  if (d.has(w)) return true;
+  for (const p of PROCLITICS) if (w.length - p.length >= 3 && w.startsWith(p) && d.has(w.slice(p.length))) return true;
+  return false;
+}
+/** Every word of the answer is a real word (true), or the dictionary could not be loaded (null). */
+function isRealAnswer(key) {
+  if (!dict().size) return null;
+  return key.split(' ').every(isWord);
+}
+
 // true when a and b differ by exactly ONE typo: a replaced, missing, extra or swapped letter.
 function oneTypoApart(a, b) {
   if (a === b) return false;
@@ -76,6 +105,7 @@ const inLexicon = (key, i) => SETS[i].has(key);
  * @param {{used?:Set<string>, crossCheck?:boolean}} [opts]
  * @returns {{ok:boolean, reason?:string, key?:string, answer?:string}}
  *   reason: empty | format | short | long | letter | single | junk | fabricated | category | dup
+ *   ok with vote:true → not in the category list; players must confirm (dict: real word? / suggestion)
  */
 function validate(text, i, letter, opts = {}) {
   const used = opts.used || null;
@@ -116,12 +146,6 @@ function validate(text, i, letter, opts = {}) {
     for (const j of [1, 2, 3, 4]) if (j !== i && inLexicon(key, j) && !inLexicon(key, i)) return { ok: false, reason: 'category', key };
   }
 
-  // Misspelling: one letter away from a word we know («دماي» for «دمام») is wrong, not a new word.
-  if (i !== 0 && !inLexicon(key, i)) {
-    const near = nearMiss(key);
-    if (near) return { ok: false, reason: 'typo', key, suggestion: near };
-  }
-
   // Fabrication: the letter glued onto a real word («س» + «فراولة»).
   const words = key.split(' ');
   const first = [...words[0]];
@@ -129,7 +153,9 @@ function validate(text, i, letter, opts = {}) {
     const rest = [first.slice(1).join(''), ...words.slice(1)].join(' ');
     if (ANY.has(rest) && !ANY.has(key)) return { ok: false, reason: 'fabricated', key };
   }
-  return { ok: true, key, answer: stripped.replace(/\s+/g, ' ') };
+  // Not in this category's list: the other players decide. A near miss of a known word is only a hint.
+  const near = nearMiss(key);
+  return { ok: true, vote: true, dict: isRealAnswer(key), suggestion: near || undefined, key, answer: stripped.replace(/\s+/g, ' ') };
 }
 
 const REASONS_AR = {
@@ -143,7 +169,7 @@ const REASONS_AR = {
   fabricated: 'كلمة غير صحيحة',
   category: 'لا تنتمي إلى هذه الفئة',
   dup: 'هذه الإجابة استُخدمت من قبل',
-  typo: 'خطأ إملائي — الكلمة غير مكتوبة بشكل صحيح',
+  vote: 'لم يوافق اللاعبون على هذه الكلمة',
 };
 
-module.exports = { validate, keyOf, CATS, REASONS_AR, inLexicon, SETS };
+module.exports = { validate, keyOf, CATS, REASONS_AR, inLexicon, SETS, isRealAnswer, nearMiss };
