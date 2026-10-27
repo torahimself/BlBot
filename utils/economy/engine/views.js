@@ -297,7 +297,7 @@ function eventEmbed(s) {
           (me.qualified
             ? `✅ You qualify for the rewards (${p.qualifyAt}+ Candy).`
             : `❌ Not qualified yet — **${needed}** more Candy to go (${p.qualifyAt} needed).`) +
-          `\n-# Only letters and digits count (spaces, emoji, links, mentions, commands, spam and repeated messages don't), so typing 360 characters gives fewer than 360 counted letters. ${p.textCharsPerPoint} counted letters = 1 🍬; a Candy is added only when complete.`,
+          `\n-# Only letters and digits count (spaces, emoji, links, mentions, commands, spam and repeated messages don't), so what you type is a bit more than what counts. ${p.textCharsPerPoint} counted letters = 1 🍬; a Candy is added only when complete.`,
         inline: false,
       },
       { name: '🌍 Community goal', value: `${communityLines(s)}\n👥 ${fmt.num(s.community.participants)} members · ${fmt.num(s.community.qualified)} qualified`, inline: false },
