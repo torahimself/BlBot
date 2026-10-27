@@ -253,7 +253,7 @@ function communityLines(s) {
   const total = Math.floor(s.community.total);
   return s.community.tiers.map((t) => {
     const frac = total / t.target;
-    return `${t.emoji} **${t.label}** ${fmt.bar(frac)} ${fmt.num(Math.min(total, t.target))} / ${fmt.num(t.target)} ${t.reached ? '✅' : ''}`;
+    return `${t.emoji} **${t.label}** ${fmt.bar(frac)} ${fmt.num(Math.min(total, t.target))} / ${fmt.num(t.target)} (${Math.min(100, (total / t.target) * 100).toFixed(2)}%) ${t.reached ? '✅' : ''}`;
   }).join('\n');
 }
 
@@ -290,13 +290,14 @@ function eventEmbed(s) {
       {
         name: '🧑 Your Candy 🍬',
         value:
-          `🎧 Voice: **${me.voice}** / ${p.voiceMax}  (${fmt.minutesText(me.voiceMinutes)})\n` +
-          `⌨️ Typing: **${me.text}** / ${p.textMax}  (${fmt.num(me.textChars)} chars)\n` +
+          `🎧 Voice: **${me.voice}** / ${p.voiceMax}  (${fmt.minutesText(me.voiceMinutes)})${me.voice >= p.voiceMax ? ' ✅ max' : `\n   ↳ next 🍬 in **${p.voiceMinutesPerPoint - (me.voiceMinutes % p.voiceMinutesPerPoint)} min** ${fmt.bar((me.voiceMinutes % p.voiceMinutesPerPoint) / p.voiceMinutesPerPoint)}`}\n` +
+          `⌨️ Typing: **${me.text}** / ${p.textMax}  (${fmt.num(me.textChars)} counted letters)${me.text >= p.textMax ? ' ✅ max' : `\n   ↳ next 🍬 needs **${fmt.num(p.textCharsPerPoint - (me.textChars % p.textCharsPerPoint))}** more letters ${fmt.bar((me.textChars % p.textCharsPerPoint) / p.textCharsPerPoint)} (${fmt.num(me.textChars % p.textCharsPerPoint)} / ${p.textCharsPerPoint})`}\n` +
           `🎮 Games: **${me.games}** / ${p.gamesMax || 0}  (${me.gamesPlayed} finished — ${p.pointsPerGame} Candy each, max ${p.gamesPerDayMax || '∞'} games a day)\n` +
           `**Total: ${me.total} / ${p.voiceMax + p.textMax + (p.gamesMax || 0)}**\n` +
           (me.qualified
             ? `✅ You qualify for the rewards (${p.qualifyAt}+ Candy).`
-            : `❌ Not qualified yet — **${needed}** more Candy to go (${p.qualifyAt} needed).`),
+            : `❌ Not qualified yet — **${needed}** more Candy to go (${p.qualifyAt} needed).`) +
+          `\n-# Only letters and digits count (spaces, emoji, links, mentions, commands, spam and repeated messages don't), so typing 360 characters gives fewer than 360 counted letters. ${p.textCharsPerPoint} counted letters = 1 🍬; a Candy is added only when complete.`,
         inline: false,
       },
       { name: '🌍 Community goal', value: `${communityLines(s)}\n👥 ${fmt.num(s.community.participants)} members · ${fmt.num(s.community.qualified)} qualified`, inline: false },
