@@ -103,10 +103,19 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     assert.strictEqual(v('س بطيخ', 2, 'س').ok, false);
     assert.strictEqual(v('س بطيخ', 2, 'س').reason, 'single');
   });
-  await t('a one-letter misspelling of a known word is rejected (دماي for دمام, تفاخ for تفاح) with a suggestion', () => {
-    const a = v('دماي', 4, 'د'); assert.strictEqual(a.ok, false); assert.strictEqual(a.reason, 'typo'); assert.strictEqual(a.suggestion, 'دمام');
-    assert.strictEqual(v('تفاخ', 2, 'ت').reason, 'typo');
-    assert.strictEqual(v('دمام', 4, 'د').ok, true);
+  await t('a misspelling of a known word is NOT rejected — it goes to a vote with a suggestion (دماي, and the real word صرار)', () => {
+    const a = v('دماي', 4, 'د'); assert(a.ok && a.vote, JSON.stringify(a)); assert.strictEqual(a.suggestion, 'دمام'); assert.strictEqual(a.dict, false);
+    const b = v('صرار', 1, 'ص'); assert(b.ok && b.vote, 'a real word is never refused by the typo rule'); assert.strictEqual(b.dict, true, 'the dictionary knows صرار');
+    assert(v('دمام', 4, 'د').ok && !v('دمام', 4, 'د').vote, 'a listed word needs no vote');
+  });
+  await t('dictionary: real Arabic words are marked dict:true, made-up ones dict:false (صالا / صروق / صزرافة)', () => {
+    assert.strictEqual(v('صروق', 1, 'ص').dict, false, 'صروق is not a word');
+    assert.strictEqual(v('صالا', 0, 'ص').dict, true, 'صالا is in the dictionary (the players still vote)');
+    assert.strictEqual(v('سروق', 1, 'س').dict, false);
+    assert.strictEqual(v('سطح', 3, 'س').dict, true);
+    assert(!v('صزرافة', 0, 'ص').ok, 'letter glued onto a real word is still refused outright');
+    assert.strictEqual(rules.isRealAnswer('سيارات'), true, 'plural forms are known');
+    assert.strictEqual(rules.isRealAnswer('وكلب'), true, 'one proclitic is stripped');
   });
   await t('a 2-letter word that is not in the list («دي») is rejected', () => {
     assert.strictEqual(v('دي', 0, 'د').ok, false);
@@ -150,7 +159,7 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     assert(!v('', 0, 'س').ok); assert(!v('س', 0, 'س').ok); assert(!v('سسسسسس', 0, 'س').ok); assert(!v('ضصثقفغعه', 3, 'ض').ok);
   });
   await t('plausible words that are not in the word list still pass (the game is not dictionary-limited)', () => {
-    assert(v('سنجاب', 1, 'س').ok, 'سنجاب'); assert(v('سبانخ', 2, 'س').ok, 'سبانخ'); assert(v('سبورة', 3, 'س').ok, 'سبورة');
+    assert(v('سنجاب', 1, 'س').ok, 'سنجاب'); assert(v('سبانخ', 2, 'س').ok, 'سبانخ'); assert(v('سبورة', 3, 'س').ok, 'سبورة');   // (ok:true, but unlisted ones are voted on)
     assert(v('سفيان', 0, 'س').ok, 'a rare name'); assert(v('فارنا', 4, 'ف').ok, 'unknown words are not rejected as «not a place»');
   });
   await t('a real word from ANOTHER category is wrong (a car is not an animal)', () => {
@@ -347,6 +356,95 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     restore();
     assert.strictEqual(s.timers.size, 0, 'all turn timers cleared');
     assert.strictEqual(s.data.turn, null);
+  });
+
+
+  // ═══════════════════════ voting on unlisted words ═══════════════════════
+  console.log('Voting on words that are not in the list');
+  const firstTurn = async (s) => { for (let i = 0; i < 300 && !(s.data.turn && s.data.turn.active); i++) await sleep(5); return s.data.turn; };
+  const waitVote = async (s) => { for (let i = 0; i < 300 && !(s.data.vote && !s.data.vote.resolved); i++) await sleep(5); return s.data.vote; };
+  const click = (s, uid, yes) => { const out = []; return cats.onComponent(s, { user: { id: uid }, reply: async (r) => out.push(r) }, yes ? 'vy' : 'vn').then(() => out); };
+  const only = (L) => { tune({ turnMs: 400, voteMs: 120, rounds: 1 }); cfg.categories.letters.splice(0, cfg.categories.letters.length, L); };
+
+  await t('unlisted REAL word + nobody votes → accepted by the dictionary (+10)', async () => {
+    only('س');
+    const s = fakeSession(['A', 'B', 'C']); const p = cats.start(s);
+    const turn = await firstTurn(s); assert.strictEqual(turn.ci, 0);
+    cats.onMessage(s, mkMsg(turn.userId, 'سطح'));
+    const vote = await waitVote(s); assert(vote, 'a vote opened');
+    const msg = s.channel.sent.find(m => /🗳️/.test(m.content || '') && m.components && m.components.length);
+    assert(msg && msg.content.includes('سطح') && msg.content.includes(`<@${turn.userId}>`), 'vote prompt names the word and the author');
+    await sleep(200);
+    assert.strictEqual(s.data.totals.get(turn.userId), 10); assert(/تم قبولها/.test(text(s)));
+    s.status = 'done'; cats.cleanup(s); await p; restore();
+  });
+  await t('made-up word (صروق) + nobody votes → refused, another player gets the same category', async () => {
+    only('ص');
+    const s = fakeSession(['A', 'B']); const p = cats.start(s);
+    const t1 = await firstTurn(s);
+    cats.onMessage(s, mkMsg(t1.userId, 'صروق'));
+    await waitVote(s); await sleep(260);
+    assert.strictEqual(s.data.totals.get(t1.userId), 0); assert(/تم رفضها/.test(text(s)));
+    assert(/لم يوافق اللاعبون/.test(text(s)), 'wrong-answer message says the players refused');
+    assert(!s.data.used.has('صروق'), 'a refused word is not reserved');
+    const t2 = await (async () => { for (let i = 0; i < 300; i++) { const x = s.data.turn; if (x && x !== t1 && x.active) return x; await sleep(5); } })();
+    assert(t2 && t2.userId !== t1.userId && t2.ci === 0 && t2.letter === 'ص', 'next player, same category and letter');
+    s.status = 'done'; cats.cleanup(s); await p; restore();
+  });
+  await t('players vote: majority ❌ refuses a real word, majority ✅ accepts a made-up one', async () => {
+    only('ص');
+    let s = fakeSession(['A', 'B', 'C', 'D']); let p = cats.start(s);
+    let turn = await firstTurn(s);
+    cats.onMessage(s, mkMsg(turn.userId, 'صالا'));
+    let vote = await waitVote(s); const others = [...vote.voters];
+    assert.strictEqual(others.length, 3); assert(!vote.voters.has(turn.userId), 'the author is not a voter');
+    await click(s, others[0], false); await click(s, others[1], false); await click(s, others[2], true);   // all voted → closes at once
+    await sleep(40);
+    assert.strictEqual(s.data.totals.get(turn.userId), 0, 'refused: 2 ❌ vs 1 ✅'); assert(/تم رفضها/.test(text(s)));
+    s.status = 'done'; cats.cleanup(s); await p;
+
+    s = fakeSession(['A', 'B', 'C']); p = cats.start(s);
+    turn = await firstTurn(s);
+    cats.onMessage(s, mkMsg(turn.userId, 'صروق'));
+    vote = await waitVote(s);
+    for (const id of vote.voters) await click(s, id, true);
+    await sleep(40);
+    assert.strictEqual(s.data.totals.get(turn.userId), 10, 'accepted by vote'); assert(/تم قبولها/.test(text(s)));
+    s.status = 'done'; cats.cleanup(s); await p; restore();
+  });
+  await t('the author, non-players and double votes do not count; voting can change but not stuff the box', async () => {
+    only('ص');
+    const s = fakeSession(['A', 'B', 'C']); const p = cats.start(s);
+    const turn = await firstTurn(s);
+    cats.onMessage(s, mkMsg(turn.userId, 'صروق'));
+    const vote = await waitVote(s); const [v1] = [...vote.voters];
+    const mine = await click(s, turn.userId, true); assert(/لا يمكنك التصويت على إجابتك/.test(mine[0].content));
+    const out = await click(s, 'stranger', true); assert(/لست من اللاعبين/.test(out[0].content));
+    await click(s, v1, true); await click(s, v1, true); await click(s, v1, false);
+    assert.strictEqual(vote.yes.size + vote.no.size, 1, 'one vote per player');
+    assert.strictEqual(vote.no.size, 1, 'last click wins');
+    await sleep(220);
+    assert.strictEqual(s.data.totals.get(turn.userId), 0, '1 ❌ vs 0 ✅');
+    s.status = 'done'; cats.cleanup(s); await p; restore();
+  });
+  await t('a vote that nobody can cast (only one other player has left) falls back to the dictionary; the game ending closes it', async () => {
+    only('س');
+    const s = fakeSession(['A', 'B']); const p = cats.start(s);
+    const turn = await firstTurn(s);
+    cats.onMessage(s, mkMsg(turn.userId, 'سطح'));
+    await waitVote(s);
+    s.status = 'done'; cats.cleanup(s);                     // game aborted during the vote
+    await p; restore();
+    assert.strictEqual(s.timers.size, 0, 'no stale timers'); assert.strictEqual(s.data.vote, null);
+  });
+  await t('a listed word needs no vote and is scored at once', async () => {
+    only('س');
+    const s = fakeSession(['A', 'B']); const p = cats.start(s);
+    const turn = await firstTurn(s);
+    cats.onMessage(s, mkMsg(turn.userId, 'سلمان'));
+    await sleep(40);
+    assert.strictEqual(s.data.totals.get(turn.userId), 10); assert(!/🗳️/.test(text(s)));
+    s.status = 'done'; cats.cleanup(s); await p; restore();
   });
 
   restore();
