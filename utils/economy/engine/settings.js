@@ -214,11 +214,11 @@ const settings = {
           voiceMax: 30,
           textMax: 30,
           gamesMax: 40,
-          voiceMinutesPerPoint: 12,   // 30 Candy = 6 h of eligible voice
-          textCharsPerPoint: 360,     // 30 Candy = 10,800 eligible characters
-          pointsPerGame: 4,           // each finished party game = 4 Candy (10 games = 40)
+          voiceMinutesPerPoint: 8,    // 30 Candy = 4 h of eligible voice
+          textCharsPerPoint: 120,     // 30 Candy = 3,600 eligible characters
+          pointsPerGame: 5,           // each finished party game = 5 Candy (8 games = 40)
           gamesPerDayMax: 3,          // at most 3 games a day count (stops farming)
-          qualifyAt: 50,
+          qualifyAt: 40,
         },
         // Community targets are TOTAL points across all members. They assume
         // ~250 members take part in a normal week (your server: 150–700): rerun
@@ -226,13 +226,13 @@ const settings = {
         // suggested targets. Rewards are
         // cumulative: reaching Gold gives the Bronze + Silver + Gold rewards.
         tiers: [
-          { key: 'bronze', label: 'Bronze', emoji: '🥉', target: 8500,
+          { key: 'bronze', label: 'Bronze', emoji: '🥉', target: 3000,
             coins: 9500,  textPotions: 1, voicePotions: 1,
             title: { id: 'event_halloween2026_bronze', name: 'Pumpkin Warden',    emoji: '🎃' } },
-          { key: 'silver', label: 'Silver', emoji: '🥈', target: 12500,
+          { key: 'silver', label: 'Silver', emoji: '🥈', target: 5000,
             coins: 15000,  textPotions: 1, voicePotions: 1,
             title: { id: 'event_halloween2026_silver', name: 'Crypt Keeper',      emoji: '🕸️' } },
-          { key: 'gold',   label: 'Gold',   emoji: '🥇', target: 16000,
+          { key: 'gold',   label: 'Gold',   emoji: '🥇', target: 7500,
             coins: 30000, textPotions: 2, voicePotions: 2,
             title: { id: 'event_halloween2026_gold',   name: 'Phantom Sovereign', emoji: '👻' } },
         ],
