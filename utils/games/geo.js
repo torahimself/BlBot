@@ -1,107 +1,38 @@
 'use strict';
-// 📍 جيو — street-level GeoGuessr-style game.
-// A real street photo (Mapillary, CC-BY-SA) is shown; players type the country.
-//   • setup: see GEO_SETUP.md (a free Mapillary client token)
-//   • first correct answer 3 points, second 2, third 1 (once per player per round)
-//   • hints: continent at 1/3 of the time, first letter + length at 2/3
+// 📍 جيو — GeoGuessr-style game with pins.
+//   • A photo is shown. Players TYPE where they think it was taken — a city, a country, a street («جدة»،
+//     «Tokyo»، «فرنسا»…). The bot looks the place up and drops a 📍 pin (the player may change it until time is up).
+//   • When the round ends the bot shows everyone's distance from the real spot on a map, and the points:
+//     the closer the pin the more points, up to 40 for a pinpoint (geoScore.js). The closest always scores most.
+//   • Photos: Mapillary street-level (needs a free token) → Wikimedia Commons (no key). See GEO_SETUP.md.
+//   • Hints: the continent at 1/3 of the time, first letter of the country + length at 2/3.
 
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const cfg = require('./config.js');
-const { COUNTRIES, matches, pick } = require('./countries.js');
-const { GEO } = require('./geoPoints.js');
+const net = require('./geoNet.js');
+const photos = require('./geoPhotos.js');
+const geocode = require('./geocode.js');
+const score = require('./geoScore.js');
+const geoMap = require('./geoMap.js');
 
-const g = cfg.geo;
+const g = () => cfg.geo;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-const API = 'https://graph.mapillary.com/images';
 
-// HTTP is injectable so tests run offline: setFetch(fn) or cfg.geo.fetch.
-let fetchOverride = null;
-function setFetch(fn) { fetchOverride = fn; }
-const doFetch = () => fetchOverride || g.fetch || globalThis.fetch;
+const NOT_CONFIGURED = '⚙️ لعبة **جيو** غير مفعّلة — لا يوجد مصدر صور (انظر GEO_SETUP.md).';
 
-// Trim spaces/newlines and one pair of quotes that sometimes get pasted along with the token.
-const tidy = (v) => String(v || '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
-const token = () => tidy(process.env.MAPILLARY_TOKEN) || tidy(g.mapillaryToken);
-const isConfigured = () => !!token();
-const NOT_CONFIGURED = '⚙️ لعبة **جيو** غير مفعّلة بعد — المطوّر يحتاج إضافة مفتاح Mapillary (انظر GEO_SETUP.md).';
-
-/** bbox = [minLon, minLat, maxLon, maxLat] around a point, with a random jitter so rounds differ. */
-function bboxAround([lat, lon], rng = Math.random) {
-  const jl = (rng() * 2 - 1) * g.jitterDeg, jo = (rng() * 2 - 1) * g.jitterDeg;
-  const cy = lat + jl, cx = lon + jo, h = g.bboxHalfDeg;
-  const r = (n) => Number(n.toFixed(5));
-  return [r(cx - h), r(cy - h), r(cx + h), r(cy + h)];
-}
-
-function buildUrl(tok, bbox) {
-  const q = new URLSearchParams({
-    access_token: tok,
-    bbox: bbox.join(','),
-    fields: 'id,thumb_1024_url,computed_geometry,captured_at',
-    is_pano: 'false',
-    limit: String(g.limit),
-  });
-  return `${API}?${q.toString()}`;
-}
-
-async function queryImages(bbox) {
-  const f = doFetch();
-  const t0 = Date.now();
-  let res;
-  try {
-    res = await f(buildUrl(token(), bbox), { signal: AbortSignal.timeout ? AbortSignal.timeout(g.httpTimeoutMs) : undefined });
-  } catch (err) {
-    throw new Error(`${err.message} (after ${Date.now() - t0} ms, bbox ${bbox.map(n => n.toFixed(3)).join(',')})`);
-  }
-  if (!res || !res.ok) throw new Error(`Mapillary HTTP ${res && res.status} (${Date.now() - t0} ms)`);
-  const body = await res.json();
-  if (body && body.error) throw new Error(`Mapillary: ${body.error.message || 'error'}`);
-  return (body && body.data ? body.data : []).filter(im => im && im.id && im.thumb_1024_url);
-}
-
-function weightedPick(list, rng) {
-  const total = list.reduce((a, c) => a + c.w, 0);
-  let x = rng() * total;
-  for (const c of list) { if (x < c.w) return c; x -= c.w; }
-  return list[list.length - 1];
-}
-
-/**
- * Finds a photo. Up to g.attempts tries: each picks a (weighted) country not used
- * yet, one of its points, and asks Mapillary. Returns
- * { country, image:{id,url,lat,lon} } or null.
- */
-async function findPhoto({ used = new Set(), rng = Math.random } = {}) {
-  const pool = COUNTRIES.filter(c => GEO[c.code] && !used.has(c.code)).map(c => ({ c, w: GEO[c.code].weight }));
-  const tried = new Set();
-  for (let a = 0; a < g.attempts && pool.length; a++) {
-    const live = pool.filter(p => !tried.has(p.c.code));
-    if (!live.length) break;
-    const p = weightedPick(live, rng);
-    tried.add(p.c.code);
-    const pts = GEO[p.c.code].points;
-    const point = pts[Math.floor(rng() * pts.length)];
-    let images = [];
-    try { images = await queryImages(bboxAround(point, rng)); }
-    catch (err) { console.error('[Geo] Mapillary query failed:', err.message); }
-    if (!images.length) continue;
-    const im = images[Math.floor(rng() * images.length)];
-    const coords = im.computed_geometry && im.computed_geometry.coordinates;
-    return { country: p.c, image: { id: im.id, url: im.thumb_1024_url, lon: coords ? coords[0] : null, lat: coords ? coords[1] : null } };
-  }
-  return null;
-}
-
-const POINTS = [3, 2, 1];
 const maskOf = (name) => [...name].map(ch => (ch === ' ' ? '   ' : '﹏')).join(' ');
 const firstLetterOf = (ar) => (ar.startsWith('ال') ? ar.slice(2, 3) : [...ar][0]);
+const NUM = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 
-function roundEmbed(q, n, total, hintLevel) {
+function roundEmbed(q, n, total, hintLevel, withMap = false) {
   const c = q.country;
   const e = new EmbedBuilder().setColor(0x2ECC71).setTitle(`📍 الجولة ${n}/${total}`)
-    .setDescription('**في أي دولة التقطت هذه الصورة؟**\nاكتب اسم الدولة في الشات!')
+    .setDescription(
+      '**أين التقطت هذه الصورة؟**\n' +
+      'اكتب في الشات **اسم المدينة أو الدولة أو المكان** وسأضع دبوسك 📍 على الخريطة.\n' +
+      `كلما اقترب دبوسك من المكان الحقيقي ربحت نقاطًا أكثر — حتى **${score.MAX}** نقطة! (يمكنك تغيير دبوسك قبل نهاية الوقت)`)
     .setImage(q.image.url)
-    .setFooter({ text: `📷 Mapillary (CC-BY-SA) · لديك ${Math.round(g.roundMs / 1000)} ثانية` });
+    .setFooter({ text: `${q.credit || '📷'} · لديك ${Math.round(g().roundMs / 1000)} ثانية` });
   if (hintLevel >= 1) e.addFields({ name: '💡 تلميح ١', value: `القارة: **${c.continentAr}**` });
   if (hintLevel >= 2) e.addFields({ name: '💡 تلميح ٢', value: `${maskOf(c.ar)}  (${[...c.ar].filter(x => x !== ' ').length} حروف)\nيبدأ بحرف **${firstLetterOf(c.ar)}**` });
   return e;
@@ -114,54 +45,70 @@ function scoreboard(s) {
 
 const mapLink = (im) => (im.lat != null ? `https://www.google.com/maps?q=${im.lat},${im.lon}` : null);
 
+/** Distances and points for one finished round, closest first. Players without a pin score 0. */
+function resolveRound(s, cur) {
+  const truth = cur.q.image;
+  const rows = [];
+  for (const id of s.ids) {
+    const pin = cur.guesses.get(id);
+    if (pin && truth.lat != null) {
+      const km = score.haversineKm(truth.lat, truth.lon, pin.lat, pin.lon);
+      rows.push({ id, pin, km, pts: score.pointsFor(km) });
+    } else rows.push({ id, pin: pin || null, km: null, pts: 0 });
+  }
+  rows.sort((a, b) => (a.km == null) - (b.km == null) || a.km - b.km);
+  return rows;
+}
+
 async function start(s) {
-  const rounds = s.options.rounds || g.rounds;
+  const rounds = s.options.rounds || g().rounds;
   s.data.scores = new Map(s.ids.map(id => [id, 0]));
   s.data.current = null;
   const used = new Set();
   let failures = 0;
-  let played = 0;
 
-  await s.channel.send({ content: `📍 **جيو** — ${rounds} جولات · صورة شارع حقيقية وعليكم تخمين الدولة! الأسرع يأخذ ٣ نقاط، ثم ٢، ثم ١.`, allowedMentions: { parse: [] } });
-  await sleep(g.introMs);
+  await s.channel.send({
+    content: `📍 **جيو** — ${rounds} جولات · صورة من مكان حقيقي وعليكم تخمين مكانها! اكتبوا اسم المدينة أو الدولة، يوضع دبوسكم على الخريطة، وأقرب دبوس يأخذ أعلى نقاط (حتى **${score.MAX}**).`,
+    allowedMentions: { parse: [] },
+  });
+  await sleep(g().introMs);
 
   for (let i = 0; i < rounds; i++) {
     if (s.status !== 'running') return;
-    const q = await findPhoto({ used });
+    const q = await photos.findPhoto({ used });
     if (!q) {
       failures++;
-      await s.channel.send('⚠️ تعذّر جلب صورة لهذه الجولة.');
-      if (failures >= 2) return s.abort('تعذّر جلب صور من Mapillary — تم إلغاء اللعبة.');   // two rounds in a row
+      await s.channel.send('⚠️ تعذّر جلب صورة لهذه الجولة.').catch(() => {});
+      if (failures >= 2) return s.abort('تعذّر جلب الصور — تم إلغاء اللعبة.');   // two rounds in a row
       continue;
     }
     failures = 0;
     used.add(q.country.code);
-    played++;
 
-    const cur = { q, resolved: false, answered: new Set(), order: [], done: null };
+    const cur = { q, resolved: false, guesses: new Map(), lookups: new Map(), busy: new Set(), done: null, timers: [], lastGuessAt: 0 };
     const finished = new Promise(res => { cur.done = res; });
+    cur.finish = () => { if (!cur.resolved) { cur.resolved = true; cur.done(); } };
     s.data.current = cur;
 
     const msg = await s.channel.send({ embeds: [roundEmbed(q, i + 1, rounds, 0)] });
-    const t1 = setTimeout(() => { if (!cur.resolved) msg.edit({ embeds: [roundEmbed(q, i + 1, rounds, 1)] }).catch(() => {}); }, Math.floor(g.roundMs / 3));
-    const t2 = setTimeout(() => { if (!cur.resolved) msg.edit({ embeds: [roundEmbed(q, i + 1, rounds, 2)] }).catch(() => {}); }, Math.floor(g.roundMs * 2 / 3));
-    const end = setTimeout(() => cur.done(), g.roundMs);
-    cur.timers = [t1, t2, end];
+    const t1 = setTimeout(() => { if (!cur.resolved) msg.edit({ embeds: [roundEmbed(q, i + 1, rounds, 1)] }).catch(() => {}); }, Math.floor(g().roundMs / 3));
+    const t2 = setTimeout(() => { if (!cur.resolved) msg.edit({ embeds: [roundEmbed(q, i + 1, rounds, 2)] }).catch(() => {}); }, Math.floor(g().roundMs * 2 / 3));
+    const end = setTimeout(() => cur.finish(), g().roundMs);
+    cur.timers.push(t1, t2, end);
     for (const t of cur.timers) s.timers.add(t);
 
     await finished;
+    cur.resolved = true;
     for (const t of cur.timers) { clearTimeout(t); s.timers.delete(t); }
+    // a pin whose lookup is still running when time is up does not count
     s.data.current = null;
     if (s.status !== 'running') return;
 
-    const link = mapLink(q.image);
-    if (cur.order.length) {
-      const lines = cur.order.map((id, k) => `${s.mention(id)} (+${POINTS[k]})`);
-      await s.channel.send({ content: `✅ الجواب: **${q.country.ar}** ${q.country.flag}\n${lines.join(' · ')}${link ? `\n📍 ${link}` : ''}`, allowedMentions: { parse: [] } });
-    } else {
-      await s.channel.send(`⌛ انتهى الوقت! الجواب: **${q.country.ar}** ${q.country.flag}${link ? `\n📍 ${link}` : ''}`);
-    }
-    await sleep(g.pauseMs);
+    // ── the round's result: distances, points, map ──
+    const rows = resolveRound(s, cur);
+    for (const r of rows) s.data.scores.set(r.id, (s.data.scores.get(r.id) || 0) + r.pts);
+    await showResult(s, cur, rows, i + 1, rounds);
+    await sleep(g().pauseMs);
   }
 
   const top = Math.max(0, ...s.data.scores.values());
@@ -173,35 +120,79 @@ async function start(s) {
     embeds: [new EmbedBuilder().setColor(0x57F287).setTitle('🏁 انتهت اللعبة')
       .setDescription(`${board}\n\n${winners.length ? `🏆 ${winners.map(i => `<@${i}>`).join(' و ')}` : 'لا يوجد فائز'}${fin.noteText}`)],
     allowedMentions: { parse: [] },
-  });
+  }).catch(() => {});
 }
 
+async function showResult(s, cur, rows, n, total) {
+  const q = cur.q, truth = q.image;
+  const link = mapLink(truth);
+  const guessed = rows.filter(r => r.km != null);
+  const lines = guessed.map((r, k) => `${NUM[k] || '▫️'} ${s.mention(r.id)} — ${r.pin.label} · **${score.formatKm(r.km)}** · **+${r.pts}**`);
+  const silent = rows.filter(r => r.km == null && !r.pin).map(r => s.mention(r.id));
+  if (silent.length) lines.push(`💤 ${silent.join(' ')} — لم يضعوا دبوسًا (+0)`);
+  if (truth.lat == null) lines.push('⚠️ لا تتوفر إحداثيات دقيقة لهذه الصورة — لا نقاط في هذه الجولة.');
+
+  const embed = new EmbedBuilder().setColor(guessed.length ? 0x2ECC71 : 0xE67E22)
+    .setTitle(`✅ الجواب: ${q.country.ar} ${q.country.flag} — الجولة ${n}/${total}`)
+    .setDescription(`${lines.join('\n') || 'لم يضع أحد دبوسًا.'}${link ? `\n\n🌍 [الموقع الحقيقي على الخريطة](${link})${truth.page ? ` · [الصورة](${truth.page})` : ''}` : ''}`);
+
+  const payload = { embeds: [embed], allowedMentions: { parse: [] } };
+  if (guessed.length && truth.lat != null) {
+    let png = null;
+    try { png = geoMap.render(truth, guessed.map(r => r.pin)); } catch (err) { console.error('[Geo] map render failed:', err.message); }
+    if (png) {
+      payload.files = [new AttachmentBuilder(png, { name: 'geo-result.png' })];
+      embed.setImage('attachment://geo-result.png');
+      embed.setFooter({ text: '⭐ الموقع الحقيقي · الأرقام = ترتيب الدبابيس' });
+    }
+  }
+  await s.channel.send(payload).catch(async () => { await s.channel.send({ embeds: [embed.setImage(null)], allowedMentions: { parse: [] } }).catch(() => {}); });
+}
+
+/** Called for every message in the game's channel while it runs. Never throws. */
 function onMessage(s, message) {
   const cur = s.data.current;
   if (!cur || cur.resolved || s.status !== 'running') return;
   const uid = message.author.id;
-  if (!s.players.has(uid) || cur.answered.has(uid)) return;
-  const text = (message.content || '').trim();
-  if (!text || text.length > 60) return;
+  if (!s.players.has(uid)) return;
+  const q = geocode.toQuery(message.content);
+  if (!q) return;
+  if (cur.busy.has(uid)) return;                        // one look-up at a time per player
+  const n = (cur.lookups.get(uid) || 0) + 1;
+  if (n > g().maxLookups) return;
+  cur.lookups.set(uid, n);
+  cur.busy.add(uid);
   s.markActive(uid);
-  if (!matches(cur.q.country, text)) return;
-  cur.answered.add(uid);
-  const rank = cur.order.length;
-  cur.order.push(uid);
-  s.data.scores.set(uid, (s.data.scores.get(uid) || 0) + POINTS[rank]);
-  message.react('✅').catch(() => {});
-  // The round closes after the third correct answer, or a short grace after the first.
-  if (cur.order.length >= POINTS.length || cur.order.length >= s.players.size) { cur.resolved = true; cur.done(); }
-  else if (rank === 0) {
-    const t = setTimeout(() => { cur.resolved = true; cur.done(); }, g.graceAfterFirstMs);
-    cur.timers.push(t); s.timers.add(t);
+  placePin(s, cur, uid, message, q).catch(err => console.error('[Geo] pin failed:', err.message)).finally(() => cur.busy.delete(uid));
+}
+
+async function placePin(s, cur, uid, message, q) {
+  const hit = await geocode.locate(q);
+  if (cur.resolved || s.status !== 'running') return;   // time ran out while looking it up
+  if (!hit) { message.react('❓').catch(() => {}); return; }
+  const changed = cur.guesses.has(uid);
+  cur.guesses.set(uid, { lat: hit.lat, lon: hit.lon, label: hit.label, query: q });
+  message.react('📍').catch(() => {});
+  // A short confirmation (it never reveals where the photo is) that removes itself.
+  const note = await message.reply({ content: `📍 ${changed ? 'تم تغيير دبوسك إلى' : 'تم وضع دبوسك على'}: **${hit.label}**`, allowedMentions: { parse: [], repliedUser: false } }).catch(() => null);
+  if (note && typeof note.delete === 'function') {
+    const t = setTimeout(() => { s.timers.delete(t); note.delete().catch(() => {}); }, 8000);
+    s.timers.add(t);
+  }
+  // Everybody has a pin → the round closes shortly after the last one (time to change one's mind).
+  if (s.ids.every(id => cur.guesses.has(id))) {
+    if (cur.allIn) { clearTimeout(cur.allIn); s.timers.delete(cur.allIn); }
+    cur.allIn = setTimeout(() => { s.timers.delete(cur.allIn); cur.finish(); }, g().allGuessedGraceMs);
+    s.timers.add(cur.allIn);
+    cur.timers.push(cur.allIn);
   }
 }
 
 module.exports = {
-  type: 'geo', title: 'جيو — خمّن البلد من الشارع', emoji: '📍', min: g.min, max: g.max,
-  blurb: 'تظهر صورة شارع حقيقية من أنحاء العالم وعلى اللاعبين تخمين الدولة بأسرع ما يمكن. الأكثر نقاطًا يفوز!',
-  start, onMessage, precheck: () => (isConfigured() ? null : NOT_CONFIGURED),
+  type: 'geo', title: 'جيو — خمّن مكان الصورة', emoji: '📍', min: cfg.geo.min, max: cfg.geo.max,
+  blurb: 'تظهر صورة من مكان حقيقي في العالم. اكتب اسم المدينة أو الدولة لتضع دبوسك 📍 — الأقرب إلى المكان الحقيقي يربح أعلى نقاط (حتى 40)!',
+  start, onMessage, precheck: () => (photos.isConfigured() ? null : NOT_CONFIGURED),
   // exported for tests
-  findPhoto, buildUrl, bboxAround, queryImages, setFetch, isConfigured, NOT_CONFIGURED, POINTS,
+  findPhoto: (o) => photos.findPhoto(o), buildUrl: (...a) => photos.buildUrl(...a), bboxAround: (...a) => photos.bboxAround(...a),
+  setFetch: net.setFetch, isConfigured: () => photos.isConfigured(), NOT_CONFIGURED, resolveRound,
 };
