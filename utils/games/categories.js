@@ -9,7 +9,9 @@
 //     random player gets the SAME category and letter, until someone answers or the
 //     attempts for that category run out («لم يُجَب»);
 //   • a live board («لوحة اللعبة») shows letters, categories, answers and scores.
-// Answer rules live in categoryRules.js.
+// Answer rules live in categoryRules.js. A word that is in the category's list counts at once; any
+// other word goes to a 12 s vote of the OTHER players (✅/❌ buttons). The majority decides; with no
+// votes or a tie the dictionary decides (real Arabic word → accepted, otherwise refused).
 
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const cfg = require('./config.js');
@@ -27,7 +29,7 @@ function shuffle(a) {
 }
 
 /** Boolean wrapper kept for callers that only need yes/no. */
-function validAnswer(text, i, letter, used) { return rules.validate(text, i, letter, { used, crossCheck: c.crossCheck }).ok; }
+function validAnswer(text, i, letter, used) { const v = rules.validate(text, i, letter, { used, crossCheck: c.crossCheck }); return v.ok && !v.vote; }
 
 const eligibleIds = (s) => s.ids.filter(id => !s.data.left.has(id));
 const maxAttemptsFor = (s) => c.maxAttempts || Math.min(c.maxAttemptsCap, Math.max(4, 2 * s.players.size));
@@ -137,7 +139,8 @@ function onMessage(s, message) {
   s.markActive(turn.userId);
   if (v.ok) {
     s.data.used.add(v.key);                                     // reserved immediately: nobody can reuse it
-    turn.settle({ kind: 'correct', answer: v.answer, key: v.key });
+    if (v.vote) turn.settle({ kind: 'unverified', answer: v.answer, key: v.key, dict: v.dict, suggestion: v.suggestion });
+    else turn.settle({ kind: 'correct', answer: v.answer, key: v.key });
   } else {
     turn.settle({ kind: 'wrong', reason: v.reason, suggestion: v.suggestion });
   }
@@ -152,15 +155,72 @@ function leave(s, uid) {
 }
 
 async function onComponent(s, interaction, action) {
-  if (action !== 'quit') return interaction.reply({ content: '⌛ هذا الزر لم يعد متاحًا.', flags: 64 });
   const uid = interaction.user.id;
+  if (action === 'vy' || action === 'vn') return castVote(s, interaction, uid, action === 'vy');
+  if (action !== 'quit') return interaction.reply({ content: '⌛ هذا الزر لم يعد متاحًا.', flags: 64 });
   if (!s.players.has(uid)) return interaction.reply({ content: '❌ أنت لست من اللاعبين.', flags: 64 });
   if (!leave(s, uid)) return interaction.reply({ content: 'لقد انسحبت بالفعل.', flags: 64 });
   await interaction.reply({ content: '🚪 انسحبت من اللعبة — لا يمكنك الفوز الآن.', flags: 64 });
   await s.channel.send({ content: `🚪 ${s.mention(uid)} انسحب من اللعبة.`, allowedMentions: { parse: [] } }).catch(() => {});
 }
 
+// ── Vote on a word that is not in the category's list ───────────────────────
+function castVote(s, interaction, uid, yes) {
+  const vote = s.data && s.data.vote;
+  if (!vote || vote.resolved) return interaction.reply({ content: '⌛ انتهى التصويت.', flags: 64 });
+  if (!s.players.has(uid)) return interaction.reply({ content: '❌ أنت لست من اللاعبين.', flags: 64 });
+  if (uid === vote.author) return interaction.reply({ content: '🙅 لا يمكنك التصويت على إجابتك.', flags: 64 });
+  if (!vote.voters.has(uid)) return interaction.reply({ content: '⌛ لا يمكنك التصويت الآن.', flags: 64 });
+  s.markActive(uid);
+  vote.yes.delete(uid); vote.no.delete(uid);
+  (yes ? vote.yes : vote.no).add(uid);
+  const everyone = vote.yes.size + vote.no.size >= vote.voters.size;
+  const p = interaction.reply({ content: yes ? '✅ تم تسجيل صوتك: صحيحة' : '❌ تم تسجيل صوتك: خاطئة', flags: 64 });
+  if (everyone) vote.finish();
+  return p;
+}
+
+/**
+ * Asks the other players whether `answer` fits the category. Resolves to true (accepted) / false.
+ * Majority of the votes cast decides; no votes or a tie → the dictionary (real Arabic word) decides.
+ */
+async function voteOnWord(s, uid, r, ci, letter) {
+  const d = s.data;
+  const fallback = r.dict === true;
+  const voters = new Set(eligibleIds(s).filter(id => id !== uid));
+  if (!voters.size) return fallback;
+
+  const ms = c.voteMs;
+  const vote = { author: uid, voters, yes: new Set(), no: new Set(), resolved: false, finish: null };
+  const done = new Promise(res => { vote.finish = () => { if (!vote.resolved) { vote.resolved = true; res(); } }; });
+  d.vote = vote;
+  const end = Date.now() + ms;
+  const hint = r.suggestion ? `\n💡 ربما تقصد «${r.suggestion}»؟` : '';
+  const msg = await s.channel.send({
+    content: `🗳️ ${s.mention(uid)} كتب **${r.answer}** — هل هي إجابة صحيحة لفئة **${CATS[ci]}** بحرف **${letter}**؟${hint}\nصوّتوا <t:${Math.floor(end / 1000)}:R> (غير صاحب الإجابة) — الأغلبية تقرر.`,
+    components: [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`pg:${s.id}:vy`).setLabel('صحيحة').setEmoji('✅').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`pg:${s.id}:vn`).setLabel('خاطئة').setEmoji('❌').setStyle(ButtonStyle.Danger),
+    )],
+    allowedMentions: { users: [uid] },
+  }).catch(() => null);
+  if (!msg) { d.vote = null; return fallback; }
+
+  const timer = setTimeout(() => vote.finish(), ms);
+  s.timers.add(timer);
+  await done;
+  clearTimeout(timer); s.timers.delete(timer);
+  d.vote = null;
+
+  const y = vote.yes.size, n = vote.no.size;
+  const accepted = y > n ? true : n > y ? false : fallback;
+  const tail = y + n === 0 ? 'لم يصوّت أحد' : `✅ ${y} · ❌ ${n}`;
+  await msg.edit({ content: `🗳️ **${r.answer}** — ${accepted ? 'تم قبولها' : 'تم رفضها'} (${tail}${y === n ? (r.dict ? '، وهي كلمة عربية موجودة في القاموس' : '، وليست في القاموس') : ''})`, components: [] }).catch(() => {});
+  return accepted;
+}
+
 function cleanup(s) {                                          // session ended: free a waiting loop
+  if (s.data && s.data.vote) s.data.vote.finish();
   if (s.data && s.data.turn) s.data.turn.settle({ kind: 'aborted' });
 }
 
@@ -186,8 +246,14 @@ async function playCategory(s, ci, letter) {
     attempts++;
     last = uid;
     d.lastPlayer = uid;
-    const r = await takeTurn(s, uid, ci, letter);
+    let r = await takeTurn(s, uid, ci, letter);
 
+    if (r.kind === 'unverified') {                             // not in the list: the other players decide
+      const ok = await voteOnWord(s, uid, r, ci, letter);
+      if (s.status !== 'running') return 'aborted';
+      r = ok ? { kind: 'correct', answer: r.answer, key: r.key }
+             : (d.used.delete(r.key), { kind: 'wrong', reason: 'vote' });
+    }
     if (r.kind === 'aborted') return 'aborted';
     if (r.kind === 'left') {
       attempts--;                                                // skipping a leaver is free
@@ -223,6 +289,7 @@ async function start(s) {
   d.used = new Set();
   d.left = new Set();
   d.turn = null;
+  d.vote = null;
   d.idle = 0;
   d.lastPlayer = null;
   d.boardMsg = null;
