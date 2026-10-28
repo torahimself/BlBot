@@ -251,7 +251,7 @@ class Session {
           noteText += `\n-# 🍬 لم تُحتسب هذه اللعبة في الفعالية — تحتاج ${cfg.eventCredit.minPlayers} لاعبين على الأقل ومدة ${Math.round(cfg.eventCredit.minDurationMs / 1000)} ثانية.`;
         } else if (who.length) {
           const got = [];
-          await events.recordGames(who, Date.now(), got);
+          await events.recordGames(who, Date.now(), got, this.channel && this.channel.client);
           const capped = who.filter(id => !got.includes(id));
           if (got.length) noteText += `\n🍬 +${ev.points.pointsPerGame} Candy: ${got.map(id => `<@${id}>`).join(' ')}`;
           if (capped.length) noteText += `\n-# ${capped.map(id => `<@${id}>`).join(' ')} وصلوا حد ${ev.points.gamesPerDayMax} ألعاب اليوم.`;
