@@ -388,7 +388,7 @@ async function lobby(def, host, bet, ch) {
   await t('full game through the lobby: bet 200, A answers, B is silent → A scores, wins the pot', async () => {
     await resetPlayers('A', 'B');
     const c = cfg.categories; const keep = JSON.parse(JSON.stringify(c));
-    Object.assign(c, { rounds: 1, turnMs: 80, introMs: 0, pauseMs: 0, betweenTurnsMs: 0, roundPauseMs: 0, maxAttempts: null, maxIdleCategories: 99 });
+    Object.assign(c, { rounds: 1, turnMs: 80, introMs: 0, pauseMs: 0, betweenTurnsMs: 0, roundPauseMs: 0, maxIdleCategories: 99 });
     c.letters.splice(0, c.letters.length, 'م');
     const ch = mkChannel(); await games.handleMessage(mkMessage(ch, 'A', '.انسان 200'));
     const s = session.sessionInChannel(ch.id);
