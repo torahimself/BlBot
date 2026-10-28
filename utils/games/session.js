@@ -239,11 +239,26 @@ class Session {
     // Plays / wins per game (for stats). Never blocks or breaks the result.
     gameStats.record(this.type, (active || ids).filter(id => ids.includes(id)), winners).catch((e) => console.error('[Party] stats failed:', e));
 
-    // Halloween event: a real, finished game earns each active player's "games" point.
+    // Halloween event: a real, finished game earns each active player's "games" Candy. The result says what
+    // happened, so nobody has to guess why a game did or did not count.
     try {
-      const real = ids.length >= cfg.eventCredit.minPlayers && Date.now() - startedAt >= cfg.eventCredit.minDurationMs;
-      const who = (active || this.ids).filter(id => ids.includes(id));
-      if (real && who.length) await events.recordGames(who);
+      const ev = events.current();
+      if (ev && events.phase(Date.now(), ev) === 'active') {
+        const took = Date.now() - startedAt;
+        const real = ids.length >= cfg.eventCredit.minPlayers && took >= cfg.eventCredit.minDurationMs;
+        const who = (active || this.ids).filter(id => ids.includes(id));
+        if (!real) {
+          noteText += `\n-# 🍬 لم تُحتسب هذه اللعبة في الفعالية — تحتاج ${cfg.eventCredit.minPlayers} لاعبين على الأقل ومدة ${Math.round(cfg.eventCredit.minDurationMs / 1000)} ثانية.`;
+        } else if (who.length) {
+          const got = [];
+          await events.recordGames(who, Date.now(), got);
+          const capped = who.filter(id => !got.includes(id));
+          if (got.length) noteText += `\n🍬 +${ev.points.pointsPerGame} Candy: ${got.map(id => `<@${id}>`).join(' ')}`;
+          if (capped.length) noteText += `\n-# ${capped.map(id => `<@${id}>`).join(' ')} وصلوا حد ${ev.points.gamesPerDayMax} ألعاب اليوم.`;
+        } else {
+          noteText += '\n-# 🍬 لم يشارك أحد فعليًا في هذه اللعبة فلم تُحتسب.';
+        }
+      }
     } catch (err) {
       console.error('[Party] event credit failed:', err);
     }
