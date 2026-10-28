@@ -65,7 +65,7 @@ function progressSql(userId, delta, now, ev = current()) {
  * part of the event score). Does nothing outside the event window. The games
  * module only calls this for real, finished games with enough players.
  */
-async function recordGames(userIds, now = Date.now()) {
+async function recordGames(userIds, now = Date.now(), credited = null) {   // `credited` (optional array) receives the ids that got the point
   const ev = current();
   if (!ev || phase(now, ev) !== 'active') return 0;
   const perDay = ev.points.gamesPerDayMax || 0;
@@ -84,6 +84,7 @@ async function recordGames(userIds, now = Date.now()) {
         `INSERT INTO event_game_days (eventId, userId, day, n) VALUES (${dbx.lit(ev.id)}, ${dbx.lit(id)}, ${dbx.lit(day)}, 1) ` +
         `ON CONFLICT(eventId, userId, day) DO UPDATE SET n = n + 1;\n` + progressSql(id, { games: 1 }, now, ev));
       n++;
+      if (credited) credited.push(id);
     });
   }
   return n;
