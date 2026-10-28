@@ -82,7 +82,12 @@ async function handleMessage(message) {
 
     const trig = parseTrigger(message.content);
     if (!trig) return false;
-    if (!channelAllowed(message.channel.id)) return false;
+    if (!channelAllowed(message.channel.id)) {
+      // Tell them where games live (the notice removes itself so the channel stays clean).
+      const note = await message.reply({ content: `🎮 الألعاب فقط في: ${require('../gameChannels.js').IDS.map(id => `<#${id}>`).join(' • ')}`, allowedMentions: { parse: [] } }).catch(() => null);
+      if (note) setTimeout(() => note.delete().catch(() => {}), 8000);
+      return true;
+    }
     if (trig.error) { await message.reply({ content: trig.error, allowedMentions: { parse: [] } }).catch(() => {}); return true; }
     await startFromMessage(message, trig);
     return true;
