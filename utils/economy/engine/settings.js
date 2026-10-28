@@ -208,6 +208,11 @@ const settings = {
         progressChannelId: null,
         // Optional: channel where the final results are announced.
         announceChannelId: null,
+        // Shout-out for the first member to hit 100/100 Candy (max score).
+        // Posted once per event, in firstTo100ChannelId, pinging that member
+        // plus firstTo100MentionUserId. Leave firstTo100ChannelId null to skip.
+        firstTo100ChannelId: '1371848739156922399',
+        firstTo100MentionUserId: '1498610562819690616',
         // Candy 🍬 (the event's points): 30 from voice + 30 from typing + 40 from
         // party games = 100 max per member.
         points: {
