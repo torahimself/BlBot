@@ -434,7 +434,7 @@ async function main() {
     eq(events.phase(startAt - 1, ev), 'upcoming', 'phase: upcoming');
     eq(events.phase(mid, ev), 'active', 'phase: active');
     eq(events.phase(endAt, ev), 'ended', 'phase: ended exactly at +7 days');
-    eq(endAt - startAt, 7 * DAY, 'event lasts exactly 7 days');
+    eq(endAt - startAt, ev.durationDays * DAY, 'event lasts durationDays days');
 
     const maxPts = events.pointsOf(ev, { textChars: 1e9, voiceMinutes: 1e9 });
     eq(maxPts.total, p.voiceMax + p.textMax, 'voice + typing alone max out at 60');
