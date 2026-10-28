@@ -65,13 +65,17 @@ function progressSql(userId, delta, now, ev = current()) {
  * part of the event score). Does nothing outside the event window. The games
  * module only calls this for real, finished games with enough players.
  */
+async function ensureGameDaysTable() {
+  await dbx.run(`CREATE TABLE IF NOT EXISTS event_game_days (
+    eventId TEXT NOT NULL, userId TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (eventId, userId, day))`);
+}
+
 async function recordGames(userIds, now = Date.now(), credited = null) {   // `credited` (optional array) receives the ids that got the point
   const ev = current();
   if (!ev || phase(now, ev) !== 'active') return 0;
   const perDay = ev.points.gamesPerDayMax || 0;
-  await dbx.run(`CREATE TABLE IF NOT EXISTS event_game_days (
-    eventId TEXT NOT NULL, userId TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (eventId, userId, day))`);
+  await ensureGameDaysTable();
   const day = time.dayKey(now);
   let n = 0;
   for (const id of new Set(userIds)) {
@@ -92,6 +96,21 @@ async function recordGames(userIds, now = Date.now(), credited = null) {   // `c
 
 async function getState(ev) {
   const { startAt, endAt } = window(ev);
+
+  // If settings.js moved this event's schedule (same eventId, new startAt),
+  // treat it as a fresh run: wipe everyone's candy/points/claims for this
+  // event so the new window starts at zero. This only fires once — after the
+  // row below is updated to the new startAt, nothing differs on the next call.
+  const prev = await dbx.get('SELECT startAt FROM event_state WHERE eventId = ?', [ev.id]);
+  if (prev && prev.startAt !== startAt) {
+    await dbx.run('DELETE FROM event_points WHERE eventId = ?', [ev.id]);
+    // event_game_days is created lazily (on the first finished game), so it
+    // may not exist yet on a fresh database — ensure it exists before touching it.
+    await ensureGameDaysTable();
+    await dbx.run('DELETE FROM event_game_days WHERE eventId = ?', [ev.id]);
+    await dbx.run('DELETE FROM event_rewards WHERE eventId = ?', [ev.id]);
+  }
+
   await dbx.run(
     "INSERT OR IGNORE INTO event_state (eventId, startAt, endAt, status) VALUES (?, ?, ?, 'scheduled')",
     [ev.id, startAt, endAt]
