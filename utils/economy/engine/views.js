@@ -251,7 +251,7 @@ function tierRewardText(t) {
 
 function communityLines(s) {
   const total = Math.floor(s.community.total);
-  return s.community.tiers.map((t) => {
+  return [...s.community.tiers].reverse().map((t) => {
     const frac = total / t.target;
     return `${t.emoji} **${t.label}** ${fmt.bar(frac)} ${fmt.num(Math.min(total, t.target))} / ${fmt.num(t.target)} (${Math.min(100, (total / t.target) * 100).toFixed(2)}%) ${t.reached ? '✅' : ''}`;
   }).join('\n');
@@ -307,7 +307,7 @@ function eventEmbed(s) {
 
   embed.addFields({
     name: '🏆 Rewards (cumulative)',
-    value: ev.tiers.map((t) => `${t.emoji} **${t.label}** — ${tierRewardText(t)}`).join('\n') +
+    value: [...ev.tiers].reverse().map((t) => `${t.emoji} **${t.label}** — ${tierRewardText(t)}`).join('\n') +
       `\n-# Reaching a tier gives its reward AND every lower tier's reward, to every member with ${p.qualifyAt}+ Candy. Rewards are paid after the event ends.`,
     inline: false,
   });
