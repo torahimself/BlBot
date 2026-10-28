@@ -8,6 +8,7 @@ const cfg = require('./config.js');
 const net = require('./geoNet.js');
 const { COUNTRIES } = require('./countries.js');
 const { GEO } = require('./geoPoints.js');
+const { haversineKm } = require('./geoScore.js');
 
 const g = () => cfg.geo;
 
@@ -56,14 +57,34 @@ async function mapillaryQuery(point, rng) {
 
 // ── Wikimedia Commons ────────────────────────────────────────────────────────
 const WIKI = 'https://commons.wikimedia.org/w/api.php';
-// Files that are not real photographs of a place.
-const NOT_A_PHOTO = /(\bmap\b|locator|flag|logo|coat[ _]of[ _]arms|diagram|plan\b|poster|stamp|banknote|coin|seal|icon|signature|chart|panorama of the interior|\binterior\b|portrait|\.svg|\.gif|\.pdf|\.tif|\.ogg|\.webm)/i;
+// Not a ground-level photo of a place: space / satellite / aerial views, maps, flags, drawings, interiors…
+// Checked against the file name, its description and its Commons categories.
+const NOT_A_PHOTO = new RegExp([
+  // space, satellite, aerial
+  'satellite', 'landsat', 'sentinel', '\\bmodis\\b', '\\bnasa\\b', '\\biss\\d', 'international space station', 'astronaut',
+  '\\borbit', 'from space', 'space shuttle', 'apollo \\d', 'earth observ', 'remote sensing', 'photographs? from space',
+  'aerial', '\\bdrone', 'from above', "bird'?s[- ]eye", 'google earth', 'blue marble', 'night lights', 'topograph',
+  // not a photo of a place
+  '\\bmaps?\\b', 'locator', '\\bglobe\\b', '\\bflags?\\b', 'logo', 'coat[ _]of[ _]arms', 'diagram', '\\bplan\\b', 'poster', '\\bstamps?\\b',
+  'banknote', '\\bcoins?\\b', '\\bseal\\b', '\\bicons?\\b', 'signature', '\\bcharts?\\b', '\\binterior', 'portrait', 'screenshot', 'painting',
+  'drawing', 'illustration', 'postcard', 'engraving', 'lithograph', '\\bscan\\b', 'rendering', '\\b3d\\b', 'artwork', 'manuscript',
+  'newspaper', 'plaque', 'panorama of the interior', '\\.svg', '\\.gif', '\\.pdf', '\\.tiff?', '\\.ogg', '\\.webm',
+].join('|'), 'i');
+
+const stripHtml = (v) => String(v == null ? '' : v).replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/gi, ' ');
+
+/** Text that describes a Commons file: title, description, categories. */
+function describeWiki(p) {
+  const em = (p.imageinfo && p.imageinfo[0] && p.imageinfo[0].extmetadata) || {};
+  const val = (k) => stripHtml(em[k] && em[k].value);
+  return `${p.title || ''} ${val('ObjectName')} ${val('ImageDescription')} ${val('Categories').replace(/\|/g, ' ')}`;
+}
 
 function wikiUrl(lat, lon) {
   const q = new URLSearchParams({
     action: 'query', format: 'json', formatversion: '2', origin: '*',
     generator: 'geosearch', ggscoord: `${lat}|${lon}`, ggsradius: String(g().wikiRadiusM), ggsnamespace: '6', ggslimit: '40',
-    prop: 'coordinates|imageinfo', colimit: '40', iiprop: 'url|mime|size', iiurlwidth: '1024',
+    prop: 'coordinates|imageinfo', colimit: '40', iiprop: 'url|mime|size|extmetadata', iiextmetadatafilter: 'ObjectName|ImageDescription|Categories', iiurlwidth: '1024',
   });
   return `${WIKI}?${q.toString()}`;
 }
@@ -84,7 +105,8 @@ async function wikimediaQuery(point, rng) {
     if (!ii || !co || !ii.thumburl) continue;
     if (ii.mime !== 'image/jpeg') continue;
     if (ii.width < 800 || ii.height < 500) continue;
-    if (NOT_A_PHOTO.test(p.title || '')) continue;
+    if (ii.width / ii.height > 2.2 || ii.width / ii.height < 1) continue;   // panorama strips, portrait shots, banners
+    if (NOT_A_PHOTO.test(describeWiki(p))) continue;
     out.push({
       id: String(p.pageid), url: ii.thumburl, lat: co.lat, lon: co.lon, source: 'wikimedia',
       page: `https://commons.wikimedia.org/wiki/${encodeURIComponent(String(p.title).replace(/ /g, '_')).replace(/%3A/gi, ':')}`,
@@ -140,6 +162,8 @@ async function findPhoto({ used = new Set(), rng = Math.random } = {}) {
       let images = [];
       try { images = await PROVIDERS[key].query(point, rng); noteOk(key); }
       catch (err) { noteFail(key); console.error(`[Geo] ${PROVIDERS[key].name} query failed:`, err.message); continue; }
+      // The photo must really be where the round says it is (a stray geotag on another continent is dropped).
+      images = images.filter(im => im.lat != null && im.lon != null && haversineKm(point[0], point[1], im.lat, im.lon) <= g().maxPhotoKm);
       if (!images.length) continue;
       const im = images[Math.floor(rng() * images.length)];
       return { country: p.c, image: im, credit: PROVIDERS[key].credit };
@@ -148,4 +172,4 @@ async function findPhoto({ used = new Set(), rng = Math.random } = {}) {
   return null;
 }
 
-module.exports = { findPhoto, buildUrl, bboxAround, mapillaryQuery, wikimediaQuery, wikiUrl, isConfigured, providerList, resetHealth, PROVIDERS, parked };
+module.exports = { NOT_A_PHOTO, describeWiki, findPhoto, buildUrl, bboxAround, mapillaryQuery, wikimediaQuery, wikiUrl, isConfigured, providerList, resetHealth, PROVIDERS, parked };
