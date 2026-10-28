@@ -3,7 +3,8 @@ const { createDuel, isInDuel } = require('../../utils/economy/duelManager.js');
 const { getBalance } = require('../../utils/economy/shopManager.js');
 const { isBet, canBet, capRefusal } = require('../../utils/economy/stakes.js');
 
-const ALLOWED_CHANNELS = ['1415933682748751923', '1432459732358140106', '1357267422369026198'];
+const GAME_CHANNELS = require('../../utils/gameChannels.js');
+const ALLOWED_CHANNELS = GAME_CHANNELS.IDS;
 
 function createDeck() {
   const suits = ['♠', '♥', '♦', '♣'];
@@ -27,7 +28,7 @@ module.exports = {
 
   async execute(interaction) {
     if (!ALLOWED_CHANNELS.includes(interaction.channelId)) {
-      return interaction.editReply(`❌ This command can only be used in <#1415933682748751923>.`);
+      return interaction.editReply(`❌ Games can only be played in ${GAME_CHANNELS.mention}.`);
     }
 
     const initiator = interaction.user;
