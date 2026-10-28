@@ -3,7 +3,8 @@ const path = require('path');
 const { SlashCommandBuilder, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const { getBalance, spendCoins } = require('../../utils/economy/shopManager.js');
 const { isBet, canBet, settleBet, capRefusal } = require('../../utils/economy/stakes.js');
-const allowedChannels = ['1415933682748751923'];
+const GAME_CHANNELS = require('../../utils/gameChannels.js');
+const allowedChannels = GAME_CHANNELS.IDS;
 
 // Pre-rendered spinning-wheel GIFs: assets/roulette/wheel_1.gif … wheel_36.gif
 // (odd pocket = red, even = black). Made by dev/make-roulette-gifs.py.
@@ -25,7 +26,7 @@ module.exports = {
         .addIntegerOption(option => option.setName('bet').setDescription('Amount to gamble (leave empty to play for free)').setRequired(false).setMinValue(1).setMaxValue(1000)),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
-            return interaction.editReply(`❌ This command can only be used in <#1415933682748751923>.`);
+            return interaction.editReply(`❌ Games can only be played in ${GAME_CHANNELS.mention}.`);
         }
 
         const userId = interaction.user.id;
