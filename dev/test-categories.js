@@ -54,7 +54,7 @@ const SAVED = JSON.parse(JSON.stringify({ ...cfg.categories, letters: null }));
 const SAVED_LETTERS = [...cfg.categories.letters];
 function tune(extra = {}) {
   const c = cfg.categories;
-  Object.assign(c, { turnMs: 80, introMs: 0, pauseMs: 0, betweenTurnsMs: 0, roundPauseMs: 0, rounds: 5, maxAttempts: null, maxIdleCategories: 99, ...extra });
+  Object.assign(c, { turnMs: 80, introMs: 0, pauseMs: 0, betweenTurnsMs: 0, roundPauseMs: 0, rounds: 5, maxIdleCategories: 99, ...extra });
   c.letters.splice(0, c.letters.length, ...LETTERS);
 }
 function restore() {
@@ -103,15 +103,17 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     assert.strictEqual(v('س بطيخ', 2, 'س').ok, false);
     assert.strictEqual(v('س بطيخ', 2, 'س').reason, 'single');
   });
-  await t('a misspelling of a known word is NOT rejected — it goes to a vote with a suggestion (دماي, and the real word صرار)', () => {
-    const a = v('دماي', 4, 'د'); assert(a.ok && a.vote, JSON.stringify(a)); assert.strictEqual(a.suggestion, 'دمام'); assert.strictEqual(a.dict, false);
+  await t('a misspelling that is not a real word is ignored (دماي); a real word that is merely unlisted (صرار) goes to a vote', () => {
+    const a = v('دماي', 4, 'د'); assert(!a.ok && a.reason === 'implausible', JSON.stringify(a));
     const b = v('صرار', 1, 'ص'); assert(b.ok && b.vote, 'a real word is never refused by the typo rule'); assert.strictEqual(b.dict, true, 'the dictionary knows صرار');
+    assert.strictEqual(b.suggestion, 'صرصار', 'the hint is a word of the SAME category');
     assert(v('دمام', 4, 'د').ok && !v('دمام', 4, 'د').vote, 'a listed word needs no vote');
   });
   await t('dictionary: real Arabic words are marked dict:true, made-up ones dict:false (صالا / صروق / صزرافة)', () => {
-    assert.strictEqual(v('صروق', 1, 'ص').dict, false, 'صروق is not a word');
+    assert.strictEqual(rules.isRealAnswer('صروق'), false, 'صروق is not a word');
+    assert(!v('صروق', 1, 'ص').ok && v('صروق', 1, 'ص').reason === 'implausible', 'a made-up animal is ignored, no vote');
     assert.strictEqual(v('صالا', 0, 'ص').dict, true, 'صالا is in the dictionary (the players still vote)');
-    assert.strictEqual(v('سروق', 1, 'س').dict, false);
+    assert(!v('سروق', 1, 'س').ok);
     assert.strictEqual(v('سطح', 3, 'س').dict, true);
     assert(!v('صزرافة', 0, 'ص').ok, 'letter glued onto a real word is still refused outright');
     assert.strictEqual(rules.isRealAnswer('سيارات'), true, 'plural forms are known');
@@ -213,15 +215,15 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     }
     assert.strictEqual([...s.data.totals.values()].reduce((a, b) => a + b, 0), 250, 'the failed player scored nothing, the category was still won');
     const out = text(s);
-    assert(/انتهى الوقت/.test(out), 'timeout message'); assert(/إجابة غير صحيحة/.test(out), 'wrong-answer message');
+    assert(/انتهى وقتك/.test(out), 'timeout message'); assert(!/إجابة غير صحيحة/.test(out), 'a wrong message is ignored, never announced as wrong');
     assert(!/لم يُجَب/.test(out), 'nothing was given up');
   });
   await t('nobody can answer one category → after the attempts «لم يُجَب» and the game moves on', async () => {
-    tune({ maxAttempts: 3 });
+    tune();
     const { s, prompts } = await play(['A', 'B', 'C'], (i) => (i.letterIdx === 0 && i.ci === 0 ? null : good(i)));
     restore();
     const first = prompts.filter(p => p.letterIdx === 0 && p.ci === 0);
-    assert.strictEqual(first.length, 3, 'exactly maxAttempts tries');
+    assert.strictEqual(first.length, 3, 'exactly one try per player');
     assert.strictEqual(new Set(first.map(p => p.uid)).size, 3, 'each player got one chance before anyone repeats');
     assert(prompts.some(p => p.letterIdx === 0 && p.ci === 1), 'then the next category');
     assert.strictEqual(s.data.board[0].cats[0].status, 'failed');
@@ -230,7 +232,7 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     assert(s.finishCalls.length === 1, 'game still completes');
   });
   await t('nobody answers anything: the game stops after maxIdleCategories and nobody wins', async () => {
-    tune({ maxAttempts: 2, maxIdleCategories: 3 });
+    tune({ maxIdleCategories: 3 });
     const { s, prompts, finish } = await play(['A', 'B'], () => null);
     restore();
     assert.strictEqual(prompts.length, 6, '3 categories × 2 attempts, then it stops');
@@ -385,7 +387,7 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     cats.onMessage(s, mkMsg(t1.userId, 'صروق'));
     await waitVote(s); await sleep(260);
     assert.strictEqual(s.data.totals.get(t1.userId), 0); assert(/تم رفضها/.test(text(s)));
-    assert(/لم يوافق اللاعبون/.test(text(s)), 'wrong-answer message says the players refused');
+    assert(/رفض اللاعبون/.test(text(s)), 'the turn ends with a short «refused» line');
     assert(!s.data.used.has('صروق'), 'a refused word is not reserved');
     const t2 = await (async () => { for (let i = 0; i < 300; i++) { const x = s.data.turn; if (x && x !== t1 && x.active) return x; await sleep(5); } })();
     assert(t2 && t2.userId !== t1.userId && t2.ci === 0 && t2.letter === 'ص', 'next player, same category and letter');
@@ -437,6 +439,98 @@ const text = (s) => s.channel.sent.map(m => (m.content || '') + ' ' + (m.embeds 
     await p; restore();
     assert.strictEqual(s.timers.size, 0, 'no stale timers'); assert.strictEqual(s.data.vote, null);
   });
+  // ═══════════════════════ spec: ألمانيا, chat is not an answer, one attempt per player ═══════════════════════
+  console.log('Arabic names, chat and one attempt per player');
+  await t('ألمانيا is accepted for an Alif country prompt — with or without the hamza, and not for another letter', () => {
+    for (const w of ['ألمانيا', 'المانيا', 'ألمانيا.', ' ألمانيا ', 'الْأَلْمانيا']) { const r = v(w, 4, 'ا'); assert(r.ok && !r.vote, `${w}: ${JSON.stringify(r)}`); }
+    for (const L of ['أ', 'إ', 'آ', 'ا']) assert(v('ألمانيا', 4, L).ok, 'any alef form of the prompt: ' + L);
+    assert(!v('ألمانيا', 4, 'م').ok && v('ألمانيا', 4, 'م').reason === 'letter', 'the «ال» of ألمانيا is part of the word, not an article');
+    assert(!v('المانيا', 4, 'م').ok, 'without the hamza it is still not a «م» word');
+  });
+  await t('real article words still work: الأردن / الاردن / الكويت / اليمن start with ا / ك / ي', () => {
+    assert(v('الأردن', 4, 'ا').ok); assert(v('الاردن', 4, 'ا').ok); assert(v('الكويت', 4, 'ك').ok); assert(v('اليمن', 4, 'ي').ok);
+    assert(v('الأسد', 1, 'ا').ok && v('السمك', 1, 'س').ok && !v('السمك', 1, 'ا').ok);
+  });
+  await t('«ما أدري» / «ما ادري» / «مدري» / «لا اعرف» are never answers and never start a vote', () => {
+    for (const w of ['ما أدري', 'ما ادري', 'ماادري', 'مدري', 'مادري', 'لا اعرف', 'ما اعرف', 'نسيت', 'ايش اكتب', 'مو عارف']) {
+      for (const [i, L] of [[1, 'م'], [0, 'م'], [3, 'م'], [4, 'م'], [2, 'ل'], [1, 'ن']]) {
+        const r = v(w, i, L); assert(!r.ok && !r.vote, `${w} / ${rules.CATS[i]} / ${L}: ${JSON.stringify(r)}`);
+      }
+    }
+    assert(rules.isNonAnswer('ما أدري') && rules.isNonAnswer('مدري') && !rules.isNonAnswer('ماعز') && !rules.isNonAnswer('مدريد'));
+  });
+  await t('Madrid is not an animal (not accepted, no vote, no «did you mean»)', () => {
+    const r = v('مدريد', 1, 'م'); assert(!r.ok && !r.vote && !r.suggestion, JSON.stringify(r));
+    assert(v('مدريد', 4, 'م').ok, 'but it is fine as a place');
+  });
+  await t('votes are only for plausible words: real unlisted words and names yes; made-up, chat, foreign words no', () => {
+    assert(v('صرار', 1, 'ص').vote, 'real word, unlisted'); assert(v('سطح', 3, 'س').vote); assert(v('صالا', 0, 'ص').vote, 'a name players may judge');
+    for (const [w, i, L] of [['صروق', 1, 'ص'], ['صزرافة', 1, 'ص'], ['ما أدري', 1, 'م'], ['سفراولة', 2, 'س'], ['سرمان', 2, 'س'], ['Hello', 1, 'س'], ['هههههه', 1, 'ه']]) {
+      const r = v(w, i, L); assert(!r.ok && !r.vote, `${w}: ${JSON.stringify(r)}`);
+    }
+  });
+  await t('a hint «هل تقصد» is only ever a word of the SAME category', () => {
+    const r = v('صرار', 1, 'ص'); assert.strictEqual(r.suggestion, 'صرصار');
+    for (const w of ['مدريد', 'ما أدري', 'مادري']) assert.strictEqual(v(w, 1, 'م').suggestion, undefined, w);
+  });
+
+  await t('during a turn, chat and wrong messages are ignored: no reply, no «wrong», the clock keeps running, the correct answer still scores', async () => {
+    tune({ turnMs: 600 });
+    const s = fakeSession(['A', 'B', 'C']);
+    const p = cats.start(s);
+    for (let i = 0; i < 200 && !(s.data.turn && s.data.turn.active); i++) await sleep(5);
+    const turn = s.data.turn; const before = s.channel.sent.length;
+    for (const talk of ['ما أدري', 'مدري', 'هههه', 'ايش نكتب', 'Hello', 'مدريد', 'شكلها حيوان', 'xxxxxx', turn.letter + ' بطيخ', 'صروقق']) cats.onMessage(s, mkMsg(turn.userId, talk));
+    assert.strictEqual(turn.resolved, false, 'the turn is still open');
+    assert.strictEqual(s.channel.sent.length, before, 'the bot said nothing');
+    assert.strictEqual(s.data.vote, null, 'and opened no vote');
+    cats.onMessage(s, mkMsg(turn.userId, BANK[turn.letter][turn.ci]));
+    assert.strictEqual(turn.resolved, true); await sleep(40);
+    assert.strictEqual(s.data.totals.get(turn.userId), 10);
+    s.status = 'done'; cats.cleanup(s); await p; restore();
+  });
+  await t('a turn with only chat simply times out: one short line, next player, no «wrong answer» messages', async () => {
+    tune({ turnMs: 80 });
+    const { s } = await play(['A', 'B'], (i) => (i.letterIdx === 0 && i.ci === 0 ? 'ما أدري' : good(i)));
+    restore();
+    const out = text(s);
+    assert(/انتهى وقتك/.test(out)); assert(!/إجابة غير صحيحة|غير صحيحة/.test(out), 'nothing is called wrong');
+  });
+  await t('two players: each gets exactly ONE attempt per category, nobody is asked twice, then «لم يُجب أحد» and on to the next', async () => {
+    tune();
+    const { s, prompts } = await play(['A', 'B'], (i) => (i.ci === 1 ? null : good(i)));
+    restore();
+    for (let L = 0; L < 5; L++) {
+      const list = prompts.filter(p => p.letterIdx === L && p.ci === 1);
+      assert.strictEqual(list.length, 2, `letter ${L}: two attempts, no more`);
+      assert.notStrictEqual(list[0].uid, list[1].uid, 'the second attempt is the OTHER player');
+      assert.strictEqual(s.data.board[L].cats[1].status, 'failed');
+      assert(prompts.some(p => p.letterIdx === L && p.ci === 2), 'then the next category');
+    }
+    assert(/لم يُجب أحد — 0 نقطة/.test(text(s)));
+    assert.strictEqual([...s.data.totals.values()].reduce((a, b) => a + b, 0), 200, '5 letters × 4 answered categories × 10');
+  });
+  await t('more players: still one attempt each (4 players, 4 attempts), never the same player twice', async () => {
+    tune();
+    const { prompts } = await play(['A', 'B', 'C', 'D'], (i) => (i.letterIdx === 0 && i.ci === 0 ? null : good(i)));
+    restore();
+    const first = prompts.filter(p => p.letterIdx === 0 && p.ci === 0);
+    assert.strictEqual(first.length, 4); assert.strictEqual(new Set(first.map(p => p.uid)).size, 4);
+  });
+  await t('a vote that says no uses up that player\'s attempt too (no second chance)', async () => {
+    only('ص');
+    const s = fakeSession(['A', 'B']); const p = cats.start(s);
+    const t1 = await firstTurn(s);
+    cats.onMessage(s, mkMsg(t1.userId, 'صالا')); await waitVote(s);
+    const other = ['A', 'B'].find(x => x !== t1.userId); await click(s, other, false);
+    for (let i = 0; i < 300 && !(s.data.turn && s.data.turn !== t1 && s.data.turn.active); i++) await sleep(5);
+    const t2 = s.data.turn; assert(t2 && t2.userId === other && t2.ci === 0, 'the other player is next');
+    await sleep(500);                                                  // other times out → both have tried → category failed, moves on
+    for (let i = 0; i < 300 && !(s.data.turn && s.data.turn.ci === 1); i++) await sleep(5);
+    assert.strictEqual(s.data.board[0].cats[0].status, 'failed'); assert(s.data.turn && s.data.turn.ci === 1, 'moved to the next category');
+    s.status = 'done'; cats.cleanup(s); await p; restore();
+  });
+
   await t('a listed word needs no vote and is scored at once', async () => {
     only('س');
     const s = fakeSession(['A', 'B']); const p = cats.start(s);
