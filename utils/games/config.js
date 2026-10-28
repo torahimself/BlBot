@@ -33,8 +33,8 @@ module.exports = {
 
   // A finished game earns Halloween-event "games" points only when it was real.
   eventCredit: {
-    minPlayers: 3,
-    minDurationMs: 90 * 1000,
+    minPlayers: 2,
+    minDurationMs: 30 * 1000,
   },
 
   guess:      { min: 2, max: 10, roundMs: 20 * 1000, hintAfterMs: 10 * 1000, rounds: 8 },
