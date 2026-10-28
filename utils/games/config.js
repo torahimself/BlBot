@@ -1,8 +1,8 @@
 'use strict';
 // Settings for the Arabic party games (/play). Everything tunable is here.
 module.exports = {
-  // Same channels the other coin games use.
-  channels: ['1415933682748751923', '1432459732358140106', '1357267422369026198'],
+  // Same channels as every other game (utils/gameChannels.js).
+  channels: require('../gameChannels.js').IDS,
 
   // Chat trigger: <sign><word> [bet]   e.g.  .علم   .مافيا   .انسان 500
   // (the bet is optional; without a number the game is free). Change `sign`
