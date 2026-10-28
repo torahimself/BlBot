@@ -200,10 +200,10 @@ const settings = {
         id: 'halloween-2026',
         name: 'Halloween Haunting',
         emoji: '🎃',
-        // Starts Mon 26 Oct 2026 00:00 Riyadh and runs 7 days (ends Mon 2 Nov
+        // Starts Mon 26 Oct 2026 00:00 Riyadh and runs 9 days (ends Wed 4 Nov
         // 00:00), so Halloween night is inside it. Change this line to move it.
         startAt: '2026-10-26T00:00:00+03:00',
-        durationDays: 7,
+        durationDays: 9,   // 26 Oct 00:00 → 4 Nov 00:00 Riyadh
         // Optional: channel where a live progress message is kept updated.
         progressChannelId: null,
         // Optional: channel where the final results are announced.
