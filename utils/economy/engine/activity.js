@@ -117,6 +117,10 @@ async function creditLocked(userId, source, units, now, client, rng) {
   ].filter(Boolean).join('\n'));
 
   // Everything above is saved. These follow-ups can fail without losing coins.
+  if (progress) {
+    try { await events.checkFirstTo100(userId, now, client); }
+    catch (err) { console.error('[Economy] first-to-100 check failed:', err); }
+  }
   let granted = [];
   let drop = null;
   try { granted = await milestones.checkLocked(userId, source, total, { now, client }); }
