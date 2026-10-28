@@ -1,5 +1,5 @@
 'use strict';
-// Photo + pin game (.جيو) — offline tests with fake HTTP (Mapillary / Wikimedia / place look-ups).
+// Photo + country game (.جيو) — offline tests with fake HTTP (Mapillary / Wikimedia).
 // Run: node dev/test-geo-game.js
 process.env.BL_ECONOMY_DB = ':memory:';
 delete process.env.MAPILLARY_TOKEN;
@@ -16,7 +16,7 @@ const games = require(path.join(root, 'utils/games/index.js'));
 const session = require(path.join(root, 'utils/games/session.js'));
 const geo = require(path.join(root, 'utils/games/geo.js'));
 const photos = require(path.join(root, 'utils/games/geoPhotos.js'));
-const geocode = require(path.join(root, 'utils/games/geocode.js'));
+const guessMod = require(path.join(root, 'utils/games/geoGuess.js'));
 const score = require(path.join(root, 'utils/games/geoScore.js'));
 const geoMap = require(path.join(root, 'utils/games/geoMap.js'));
 
@@ -42,7 +42,7 @@ async function t(name, fn) { try { await fn(); passed++; console.log('  ✓', na
 
 // ── fake network ─────────────────────────────────────────────────────────────
 const json = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
-const PARIS = { lat: 48.8566, lon: 2.3522 };
+const PARIS = { lat: 48.8566, lon: 2.3522 };   // = wherever the last search was (router updates it) so photos are always 'in' the searched country
 const wikiPage = (n, over = {}) => ({ pageid: 100 + n, title: `File:Street ${n}.jpg`, coordinates: [{ lat: PARIS.lat, lon: PARIS.lon }],
   imageinfo: [{ thumburl: `https://upload.example/${n}.jpg`, mime: 'image/jpeg', width: 1600, height: 1000 }], ...over });
 const mlyPhoto = (n) => ({ id: 'img' + n, thumb_1024_url: `https://cdn.example/${n}.jpg`, computed_geometry: { type: 'Point', coordinates: [PARIS.lon, PARIS.lat] }, captured_at: 1 });
@@ -52,6 +52,8 @@ function router({ wiki, mly, meteo, nom } = {}) {
   const calls = [];
   const f = async (url) => {
     const u = new URL(url); calls.push(url);
+    if (u.host === 'graph.mapillary.com' && u.searchParams.get('bbox')) { const b = u.searchParams.get('bbox').split(',').map(Number); PARIS.lon = (b[0] + b[2]) / 2; PARIS.lat = (b[1] + b[3]) / 2; }
+    if (u.host === 'commons.wikimedia.org' && u.searchParams.get('ggscoord')) { const c = u.searchParams.get('ggscoord').split('|').map(Number); PARIS.lat = c[0]; PARIS.lon = c[1]; }
     if (u.host === 'graph.mapillary.com') return mly ? mly(u) : json({}, 500);
     if (u.host === 'commons.wikimedia.org') return json(wiki ? wiki(u) : { query: { pages: [wikiPage(1), wikiPage(2)] } });
     if (u.host === 'geocoding-api.open-meteo.com') {
@@ -70,7 +72,7 @@ const hostCalls = (f, host) => f.calls.filter(u => new URL(u).host === host).len
 (async () => {
   await db.ready;
   const G = cfg.geo; const keep = { ...G, providers: [...G.providers] };
-  Object.assign(G, { nominatimGapMs: 5, geocodeTimeoutMs: 2000, httpTimeoutMs: 2000 });
+  Object.assign(G, { httpTimeoutMs: 2000 });
 
   console.log('Data');
   await t('every country has 1–3 points and an Arabic continent', () => {
@@ -140,6 +142,30 @@ const hostCalls = (f, host) => f.calls.filter(u => new URL(u).host === host).len
     geo.setFetch(router({ wiki: () => ({ query: { pages: [...bad, wikiPage(7)] } }) }));
     const r = await photos.findPhoto(); assert.strictEqual(r.image.id, '107');
   });
+  await t('Wikimedia: space, satellite and aerial images are never used (title, description or category)', async () => {
+    photos.resetHealth();
+    const meta = (desc, cats) => [{ thumburl: 'https://u/x.jpg', mime: 'image/jpeg', width: 1600, height: 1000, extmetadata: { ImageDescription: { value: desc }, Categories: { value: cats } } }];
+    const bad = [
+      wikiPage(1, { title: 'File:Nicaragua satellite image.jpg' }),
+      wikiPage(2, { title: 'File:Managua from space.jpg' }),
+      wikiPage(3, { title: 'File:IMG 123.jpg', imageinfo: meta('<b>Nicaragua seen from the ISS</b> by an astronaut', 'Nicaragua') }),
+      wikiPage(4, { title: 'File:IMG 124.jpg', imageinfo: meta('A view', 'Photographs from space|Nicaragua') }),
+      wikiPage(5, { title: 'File:Aerial view of Muscat.jpg' }),
+      wikiPage(6, { title: 'File:Landsat 8 Lake Nicaragua.jpg' }),
+      wikiPage(7, { title: 'File:Strip.jpg', imageinfo: [{ thumburl: 'https://u/s.jpg', mime: 'image/jpeg', width: 6000, height: 1000 }] }),   // panorama strip
+    ];
+    geo.setFetch(router({ wiki: () => ({ query: { pages: [...bad, wikiPage(8, { title: 'File:Corniche road.jpg', imageinfo: meta('A road along the sea', 'Roads in Oman') })] } }) }));
+    const r = await photos.findPhoto(); assert.strictEqual(r.image.id, '108');
+    geo.setFetch(router({ wiki: () => ({ query: { pages: bad } }) }));
+    photos.resetHealth(); assert.strictEqual(await photos.findPhoto(), null, 'only unsuitable images → no photo rather than a bad one');
+  });
+  await t('a photo geotagged far from the place the round picked is thrown away', async () => {
+    photos.resetHealth();
+    geo.setFetch(router({ wiki: () => ({ query: { pages: [wikiPage(1, { coordinates: [{ lat: 0, lon: -150 }] }), wikiPage(2)] } }) }));
+    const r = await photos.findPhoto(); assert.strictEqual(r.image.id, '102');
+    geo.setFetch(router({ wiki: () => ({ query: { pages: [wikiPage(1, { coordinates: [{ lat: 0, lon: -150 }] })] } }) }));
+    photos.resetHealth(); assert.strictEqual(await photos.findPhoto(), null);
+  });
   await t('with a token: Mapillary first; photo carries its own coordinates', async () => {
     process.env.MAPILLARY_TOKEN = 'MLY|test|token'; photos.resetHealth();
     const f = router({ mly: () => json({ data: [mlyPhoto(1), mlyPhoto(2)] }) }); geo.setFetch(f);
@@ -163,7 +189,7 @@ const hostCalls = (f, host) => f.calls.filter(u => new URL(u).host === host).len
   });
   await t('network exception on one provider is survived; all providers down → null', async () => {
     photos.resetHealth();
-    geo.setFetch(async (url) => { if (/mapillary/.test(url)) throw new Error('boom'); return json({ query: { pages: [wikiPage(3)] } }); });
+    const rt = router(); geo.setFetch(async (url) => { if (/mapillary/.test(url)) throw new Error('boom'); return rt(url); });
     assert((await photos.findPhoto()).image.source === 'wikimedia');
     photos.resetHealth();
     geo.setFetch(async () => { throw new Error('offline'); });
@@ -177,37 +203,31 @@ const hostCalls = (f, host) => f.calls.filter(u => new URL(u).host === host).len
   });
   delete process.env.MAPILLARY_TOKEN;
 
-  console.log('Place look-up (the pin)');
-  await t('countries and capitals are found offline (Arabic and English)', async () => {
-    geocode.clearCache(); const f = router(); geo.setFetch(f);
-    const sa = await geocode.locate('السعودية'); assert(sa && sa.kind === 'country' && /السعودية/.test(sa.label));
-    const paris = await geocode.locate('باريس'); assert(Math.abs(paris.lat - 48.86) < 0.1 && paris.kind === 'capital');
-    const tokyo = await geocode.locate('Tokyo'); assert(Math.abs(tokyo.lon - 139.69) < 0.1);
-    assert.strictEqual(f.calls.length, 0, 'no network used');
+  console.log('Reading a guess (countries only)');
+  const code = (x) => { const c = guessMod.parseGuess(x); return c && c.code; };
+  await t('no country name is shared by two countries', () => { assert.deepStrictEqual(guessMod.CLASHES, []); });
+  await t('Germany in Arabic and English, with harmless spelling differences', () => {
+    for (const x of ['ألمانيا', 'المانيا', 'ألمانيا.', ' Germany ', 'germany', 'GERMANY', 'الدولة ألمانيا', "it's Germany", 'the country is Germany']) assert.strictEqual(code(x), 'DE', x);
   });
-  await t('other places use Open-Meteo (Arabic works) and are cached', async () => {
-    geocode.clearCache(); const f = router(); geo.setFetch(f);
-    const a = await geocode.locate('جدة'); assert(a && a.source === 'open-meteo' && /جدة/.test(a.label) && Math.abs(a.lat - 21.54) < 0.01);
-    const u = new URL(f.calls[0]); assert.strictEqual(u.searchParams.get('language'), 'ar');
-    await geocode.locate('جدة'); await geocode.locate(' جدة '); assert.strictEqual(f.calls.length, 1, 'cached');
+  await t('Oman is Oman — never Jordan because of Amman', () => {
+    for (const x of ['عمان', 'عُمان', 'سلطنة عمان', 'Oman', 'أعتقد أنها عمان']) assert.strictEqual(code(x), 'OM', x);
+    assert.strictEqual(code('الأردن'), 'JO'); assert.strictEqual(code('Jordan'), 'JO');
+    assert.strictEqual(code('Amman'), null, 'the capital in English is not a guess');
   });
-  await t('unknown to Open-Meteo → Nominatim (streets / landmarks); unknown to both → null', async () => {
-    geocode.clearCache();
-    const f = router({ nom: (u) => json(u.searchParams.get('q') === 'برج المملكة' ? [{ lat: '24.7114', lon: '46.6744', display_name: 'برج المملكة, طريق الملك فهد, الرياض, السعودية' }] : []) });
-    geo.setFetch(f);
-    const a = await geocode.locate('برج المملكة'); assert(a && a.source === 'nominatim' && Math.abs(a.lat - 24.7114) < 1e-6 && /برج المملكة/.test(a.label));
-    assert.strictEqual(await geocode.locate('زززقبلاتنم'), null);
+  await t('capitals alone are not guesses', () => {
+    for (const x of ['برلين', 'Berlin', 'باريس', 'Paris', 'مسقط', 'Muscat', 'الرياض', 'Tokyo']) assert.strictEqual(code(x), null, x);
   });
-  await t('chatter is not looked up: laughter, keyboard mashing, numbers, links, long text', async () => {
-    geocode.clearCache(); const f = router(); geo.setFetch(f);
-    for (const x of ['هههههه', 'asdfghjk', '123456', 'https://x.com/a', 'ا'.repeat(80), '', '😂']) assert.strictEqual(await geocode.locate(x), null, x);
-    assert.strictEqual(f.calls.length, 0);
+  await t('conversation, questions and random text are not guesses', () => {
+    for (const x of ['شكلها اوروبا', 'ما أدري', 'مدري', 'هههههه', 'هذي ألمانيا ولا فرنسا؟', 'is it germany?', 'ألمانيا؟', 'شفت ألمانيا مرة وكانت حلوة',
+      'I think the street looks like germany but not sure', 'asdfgh', '😂', '', 'ا', 'https://germany.example']) assert.strictEqual(code(x), null, x);
   });
-  await t('a network error is not remembered as «no such place»', async () => {
-    geocode.clearCache(); let fail = true;
-    geo.setFetch(async (url) => { if (fail) throw new Error('down'); return router()(url); });
-    assert.strictEqual(await geocode.locate('جدة'), null);
-    fail = false; assert((await geocode.locate('جدة')).source === 'open-meteo');
+  await t('common aliases work', () => {
+    assert.strictEqual(code('السعودية'), 'SA'); assert.strictEqual(code('Saudi Arabia'), 'SA'); assert.strictEqual(code('USA'), 'US');
+    assert.strictEqual(code('الولايات المتحدة'), 'US'); assert.strictEqual(code('بريطانيا'), 'GB'); assert.strictEqual(code('UK'), 'GB');
+  });
+  await t('a country pin is on that country (its first listed city)', () => {
+    const de = guessMod.parseGuess('Germany'); const pin = guessMod.pinOf(de);
+    assert(pin.code === 'DE' && Math.abs(pin.lat - GEO.DE.points[0][0]) < 1e-9 && /ألمانيا/.test(pin.label));
   });
 
   console.log('Result map');
@@ -254,72 +274,95 @@ const hostCalls = (f, host) => f.calls.filter(u => new URL(u).host === host).len
   const say = async (ch, uid, text) => { const m = mkMessage(ch, uid, text); await games.handleMessage(m); await sleep(40); return m; };
   const resultMsg = (ch, n) => ch.sent.filter(m => m.embeds && m.embeds[0] && m.embeds[0].data && /الجواب/.test(m.embeds[0].data.title || ''))[n];
 
-  await t('pins: typed places get 📍, distances + points per player, map attached, closest first, winner takes the pot', async () => {
+  const other = (code) => countries.COUNTRIES.find(c => c.code !== code && c.code !== 'US' && GEO[c.code]);
+  const noteTexts = (m) => m.replies.map(r => r.content).join(' ');
+
+  await t('right country +40 · wrong country by distance · first guess final · taken (even in another language) · chatter ignored · winner takes the pot', async () => {
     photos.resetHealth(); geo.setFetch(router());
-    const { ch, s } = await newGame(100, ['A', 'B', 'C']);
-    let cur = await waitRound(s);
+    G.rounds = 1; G.roundMs = 1200;
+    const { ch, s } = await newGame(100, ['A', 'B', 'C', 'D']);
+    const cur = await waitRound(s);
+    const T = cur.q.country, X = other(T.code), truth = cur.q.image;
     const roundMsg = ch.sent.find(m => m.embeds && m.embeds[0] && m.embeds[0].data && m.embeds[0].data.image);
-    assert(roundMsg.embeds[0].data.image.url.startsWith('https://upload.example/'), 'photo shown');
-    assert(/أين التقطت/.test(roundMsg.embeds[0].data.description) && /40/.test(roundMsg.embeds[0].data.description), 'Arabic question, max 40 mentioned');
+    assert(/اسم الدولة/.test(roundMsg.embeds[0].data.description) && /40/.test(roundMsg.embeds[0].data.description), 'asks for the country, mentions 40');
+    assert(!/المدينة/.test(roundMsg.embeds[0].data.description), 'no more cities');
     assert(/Wikimedia/.test(roundMsg.embeds[0].data.footer.text), 'attribution');
 
-    const a = await say(ch, 'A', 'باريس');                      // pinpoint-ish (Paris centre vs the photo)
-    const b = await say(ch, 'B', 'london');                     // ≈344 km
-    const x = await say(ch, 'X', 'باريس');                      // not a player
-    const c = await say(ch, 'C', 'هههه');                       // chatter
-    assert(a.reacts.includes('📍') && b.reacts.includes('📍')); assert(x.reacts.length === 0 && c.reacts.length === 0);
-    assert(/تم وضع دبوسك على/.test(a.replies[0].content), 'confirmation names the place');
-    const d = await say(ch, 'C', 'نيويورك');                    // far away
-    assert(d.reacts.includes('📍'));
-    await sleep(500);                                           // everyone has a pin → round closes after the short grace
-    const r1 = resultMsg(ch, 0); assert(r1, 'result posted');
-    const text = r1.embeds[0].data.description;
-    assert(/\+40/.test(text), 'A pinpoint → +40: ' + text); assert(/London/.test(text) && /\+27/.test(text), 'B ≈ +27: ' + text); assert(/نيويورك/.test(text));
-    assert(text.indexOf('<@A>') < text.indexOf('<@B>') && text.indexOf('<@B>') < text.indexOf('<@C>'), 'closest first');
-    assert(/google\.com\/maps/.test(text), 'map link');
-    if (geoMap.canvas()) { assert(r1.files && r1.files[0], 'map image attached'); assert.strictEqual(r1.embeds[0].data.image.url, 'attachment://geo-result.png'); }
-    assert.strictEqual(s.data.scores.get('A'), 40); assert(s.data.scores.get('B') > s.data.scores.get('C'), 'B closer than C');
-    assert(s.data.scores.get('B') >= 26 && s.data.scores.get('B') <= 28, 'London ≈ 344 km ≈ 27: ' + s.data.scores.get('B'));
-    assert(s.data.scores.get('C') <= 2, 'New York is ~5,800 km away → almost nothing');
+    // conversation never reacts, never replies, never pins
+    for (const talk of ['شكلها اوروبا', 'ما أدري', 'هذي ' + X.ar + ' ولا ' + T.ar + '؟', 'اظن الطريق حلو', 'هههههه', T.capAr + ' ؟']) {
+      const m = await say(ch, 'B', talk); assert(m.reacts.length === 0 && m.replies.length === 0, `no reaction to «${talk}»`);
+    }
+    assert.strictEqual(cur.guesses.size, 0, 'nothing pinned from chatter');
+    const nonPlayer = await say(ch, 'Z', T.ar); assert(nonPlayer.reacts.length === 0 && cur.guesses.size === 0, 'not a player');
 
-    // round 2: only A answers, B changes mind once, C silent
-    cur = await waitRound(s);
-    await say(ch, 'B', 'london'); const changed = await say(ch, 'B', 'باريس');   // changed pin → Paris
-    assert(/تغيير دبوسك/.test(changed.replies[0].content), 'tells the player the pin was changed');
-    await say(ch, 'A', 'jeddah');
-    for (let i = 0; i < 200 && session.sessions.size; i++) await sleep(50);   // time runs out (3 s)
+    const a = await say(ch, 'A', T.ar);                                   // right country (Arabic)
+    assert(a.reacts.includes('📍') && /تم تثبيت اختيارك/.test(noteTexts(a)), 'locked');
+    const b1 = await say(ch, 'B', T.en);                                  // same country, other language → taken
+    assert(/اختارها لاعب آخر/.test(noteTexts(b1)) && b1.reacts.length === 0 && !cur.guesses.has('B'), 'taken: ' + noteTexts(b1));
+    const b2 = await say(ch, 'B', X.en);                                  // B may still choose another country
+    assert(b2.reacts.includes('📍') && cur.guesses.get('B').code === X.code);
+    const b3 = await say(ch, 'B', T.ar);                                  // a locked player cannot change
+    assert(b3.reacts.length === 0 && b3.replies.length === 0 && cur.guesses.get('B').code === X.code, 'first guess is final');
+    const c1 = await say(ch, 'C', T.ar);                                  // taken again
+    assert(/اختارها لاعب آخر/.test(noteTexts(c1)) && !cur.guesses.has('C'));
+    assert.strictEqual(cur.taken.get(T.code), 'A');
+    // D is silent; the round runs to its time limit
+    for (let i = 0; i < 200 && session.sessions.size; i++) await sleep(50);
     assert.strictEqual(session.sessions.size, 0, 'finished');
-    const r2 = resultMsg(ch, 1).embeds[0].data.description;
-    assert(/لم يضعوا دبوسًا/.test(r2) && r2.includes('<@C>'), 'silent player listed with +0: ' + r2);
-    assert.strictEqual(s.data.scores.get('B'), 27 + 40, 'B: London round 1, then changed to Paris (last pin counts)');
-    // totals: A 40 + (Jeddah ≈ 4,500 km → 3), B 67 → B wins the pot (300)
-    assert.strictEqual(await bal('B'), 10000 - 100 + 300);
-    assert.strictEqual((await bal('A')) + (await bal('B')) + (await bal('C')), 30000, 'coins conserved');
+    const text = resultMsg(ch, 0).embeds[0].data.description;
+    const kmB = score.haversineKm(truth.lat, truth.lon, ...GEO[X.code].points[0]);
+    const ptsB = Math.min(39, score.pointsFor(kmB));
+    assert(/\+40/.test(text) && text.indexOf('<@A>') < text.indexOf('<@B>'), 'A first with +40: ' + text);
+    assert(new RegExp('\\+' + ptsB + '(\\*\\*|\\s|$)').test(text.split('\n').find(l => l.includes('<@B>'))), `B gets ${ptsB}: ` + text);
+    assert(/لم يختاروا دولة/.test(text) && text.includes('<@C>') && text.includes('<@D>'), 'silent players listed with +0');
+    assert.strictEqual(s.data.scores.get('A'), 40); assert.strictEqual(s.data.scores.get('B'), ptsB); assert(ptsB < 40);
+    assert.strictEqual(s.data.scores.get('C'), 0); assert.strictEqual(s.data.scores.get('D'), 0);
+    if (geoMap.canvas()) assert(resultMsg(ch, 0).files && resultMsg(ch, 0).files[0], 'map attached');
+    assert.strictEqual(await bal('A'), 10000 - 100 + 400, 'A wins the pot of 4 × 100');
+    assert.strictEqual((await bal('A')) + (await bal('B')) + (await bal('C')) + (await bal('D')), 40000, 'coins conserved');
+    G.rounds = 2; G.roundMs = 3000;
   });
-  await t('unknown place → ❓ and no pin; look-ups per player are limited; a late pin is ignored', async () => {
+  await t('two players name the same country at the same instant → exactly one gets it', async () => {
     photos.resetHealth(); geo.setFetch(router());
-    G.rounds = 1; G.roundMs = 700; const maxL = G.maxLookups; G.maxLookups = 3;
-    const { ch, s } = await newGame(0, ['A', 'B']);
+    G.rounds = 1; G.roundMs = 600;
+    const { ch, s } = await newGame(0, ['A', 'B', 'C']);
     const cur = await waitRound(s);
-    const bad = await say(ch, 'A', 'مكانغيرموجودابدا'); assert(bad.reacts.includes('❓') && !cur.guesses.has('A'));
-    await say(ch, 'A', 'مكان2غير'); await say(ch, 'A', 'مكان3غير');
-    const over = await say(ch, 'A', 'باريس');                   // 4th look-up refused
-    assert.strictEqual(over.reacts.length, 0); assert(!cur.guesses.has('A'));
-    await say(ch, 'B', 'باريس'); assert(cur.guesses.has('B'));
+    const T = cur.q.country;
+    const ms = [mkMessage(ch, 'B', T.ar), mkMessage(ch, 'A', T.en), mkMessage(ch, 'C', 'Germany')];
+    await Promise.all(ms.map(m => games.handleMessage(m)));
+    await sleep(50);
+    assert.strictEqual(cur.taken.get(T.code), 'B', 'first to arrive wins');
+    assert.strictEqual(ms[0].reacts.includes('📍'), true);
+    assert(!cur.guesses.has('A') && /اختارها لاعب آخر/.test(noteTexts(ms[1])), 'second is told it is taken');
+    if (T.code !== 'DE') assert(cur.guesses.get('C') && cur.guesses.get('C').code === 'DE');
+    assert.strictEqual([...cur.guesses.values()].filter(p => p.code === T.code).length, 1, 'one pin for that country');
     for (let i = 0; i < 100 && session.sessions.size; i++) await sleep(50);
-    const late = await say(ch, 'B', 'london'); assert.strictEqual(late.reacts.length, 0, 'after the round nothing counts');
-    G.rounds = 2; G.roundMs = 3000; G.maxLookups = maxL;
+    G.rounds = 2; G.roundMs = 3000;
   });
-  await t('a slow look-up that finishes after the round ended does not count', async () => {
-    photos.resetHealth(); geocode.clearCache();
-    geo.setFetch(async (url) => { if (/open-meteo/.test(url)) { await sleep(600); return json({ results: [{ name: 'جدة', latitude: 21.5, longitude: 39.1, country: 'السعودية' }] }); } return router()(url); });
-    G.rounds = 1; G.roundMs = 300;
+  await t('everyone has chosen → the round closes at once; a guess after the round does nothing', async () => {
+    photos.resetHealth(); geo.setFetch(router());
+    G.rounds = 1; G.roundMs = 8000;
     const { ch, s } = await newGame(0, ['A', 'B']);
     const cur = await waitRound(s);
-    const m = mkMessage(ch, 'A', 'جدة'); await games.handleMessage(m);
+    const T = cur.q.country, X = other(T.code);
+    const t0 = Date.now();
+    await say(ch, 'A', T.ar); await say(ch, 'B', X.ar);
     for (let i = 0; i < 100 && session.sessions.size; i++) await sleep(50);
-    await sleep(500);
-    assert(!cur.guesses.has('A') && m.reacts.length === 0); assert.strictEqual(s.data.scores.get('A'), 0);
+    assert(Date.now() - t0 < 4000, 'closed long before the 8 s limit');
+    const late = await say(ch, 'A', T.ar); assert(late.reacts.length === 0 && late.replies.length === 0, 'after the game nothing counts');
+    G.rounds = 2; G.roundMs = 3000;
+  });
+  await t('a country that was taken in round 1 is free again in round 2; the same country as the photo is never reused', async () => {
+    photos.resetHealth(); geo.setFetch(router());
+    G.rounds = 2; G.roundMs = 900;
+    const { ch, s } = await newGame(0, ['A', 'B']);
+    const c1 = await waitRound(s); const T1 = c1.q.country;
+    await say(ch, 'A', 'Germany');
+    for (let i = 0; i < 100 && (s.data.current === c1 || !s.data.current); i++) await sleep(30);
+    const c2 = await waitRound(s); assert(c2 !== c1 && c2.q.country.code !== T1.code, 'new round, other photo country');
+    assert(!c2.taken.has('DE') && c2.guesses.size === 0, 'reservations start empty each round');
+    await say(ch, 'B', 'Germany'); assert.strictEqual(c2.taken.get('DE'), 'B');
+    for (let i = 0; i < 100 && session.sessions.size; i++) await sleep(50);
     G.rounds = 2; G.roundMs = 3000;
   });
   await t('hints appear at 1/3 and 2/3 of the round', async () => {
