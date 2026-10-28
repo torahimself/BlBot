@@ -39,8 +39,8 @@ module.exports = {
 
   guess:      { min: 2, max: 10, roundMs: 20 * 1000, hintAfterMs: 10 * 1000, rounds: 8 },
   roulette:   { min: 3, max: 12, pickMs: 15 * 1000, pauseMs: 2500, revealPadMs: 700 },
-  // Street-photo game (.جيو): a photo is shown, players TYPE where it was taken (a city, a country, a street…),
-  // the bot drops a pin there, and at the end of the round the closest pin scores the most (max 40).
+  // Street-photo game (.جيو): a photo is shown, players TYPE the COUNTRY (Arabic or English). The first valid
+  // guess is final, a country can be taken once per round, the right country scores 40, others by distance.
   // Photos: Mapillary street-level photos when a free MAPILLARY_TOKEN is set, then Wikimedia Commons
   // (no key). See GEO_SETUP.md.
   geo: {
@@ -48,14 +48,14 @@ module.exports = {
     providers: ['mapillary', 'wikimedia'],   // order tried; remove one to turn it off
     min: 2, max: 10, rounds: 5,
     roundMs: 50 * 1000,          // hints come at 1/3 and 2/3 of this
-    allGuessedGraceMs: 4 * 1000, // when everybody has a pin the round ends this long after the last one
-    maxLookups: 6,               // place look-ups per player per round (typos, chatter)
+    allGuessedGraceMs: 1500,     // when everybody has chosen a country the round ends this long after the last one
     introMs: 2500, pauseMs: 6000,
     attempts: 6,                 // tries per round to find a photo (different places)
     bboxHalfDeg: 0.004,          // Mapillary search box half-size — its API rejects/times out on boxes of 0.01° or more
     jitterDeg: 0.05,             // random offset around the city so rounds differ (~5 km)
     wikiRadiusM: 8000,           // Wikimedia search radius around that point
-    limit: 10, httpTimeoutMs: 9000, geocodeTimeoutMs: 5000, nominatimGapMs: 1100,
+    maxPhotoKm: 30,              // a photo farther than this from the place the round picked is thrown away
+    limit: 10, httpTimeoutMs: 9000,
     parkAfterFails: 2, parkMs: 10 * 60 * 1000,   // a provider failing twice in a row is skipped for 10 minutes
     fetch: null,                 // tests inject a fake here
   },
@@ -66,8 +66,6 @@ module.exports = {
     turnMs: 15 * 1000,            // time a picked player has to type an answer
     pointsCorrect: 10,
     voteMs: 12 * 1000,            // players vote on a word that is not in the category list
-    maxAttempts: null,            // tries per category before «لم يُجَب»; null = min(maxAttemptsCap, max(4, 2 × players))
-    maxAttemptsCap: 8,
     maxIdleCategories: 3,         // this many unanswered categories in a row → the game ends
     crossCheck: true,             // reject a real word that belongs to another category (a car as an animal)
     // Letters a round may use (hard letters ث ذ ز ض ط ظ غ و ي ه ء are left out on purpose).
