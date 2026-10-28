@@ -3,15 +3,17 @@
 //
 // 5 rounds, one letter each. In every round the five categories are played one
 // after another:
-//   • a random player is picked and mentioned; they have `turnMs` (15 s) to TYPE
-//     one answer in the channel (their first message is their answer);
-//   • correct → +10 points and the category is done; wrong / out of time → another
-//     random player gets the SAME category and letter, until someone answers or the
-//     attempts for that category run out («لم يُجَب»);
+//   • a random player is picked and mentioned; they have `turnMs` (15 s) to TYPE their answer
+//     in the channel. Messages that are not a valid answer (chat, «ما أدري», wrong letter, made-up
+//     words…) are IGNORED — no reaction, no «wrong» message — and the clock keeps running, so friends
+//     can talk while the player thinks;
+//   • correct → +10 points and the category is done; out of time (or a vote that says no) → the turn
+//     ends and ANOTHER random player gets the SAME category and letter. Every player gets ONE attempt
+//     per category; when all have had theirs nobody scores and the game moves on («لم يُجَب»);
 //   • a live board («لوحة اللعبة») shows letters, categories, answers and scores.
-// Answer rules live in categoryRules.js. A word that is in the category's list counts at once; any
-// other word goes to a 12 s vote of the OTHER players (✅/❌ buttons). The majority decides; with no
-// votes or a tie the dictionary decides (real Arabic word → accepted, otherwise refused).
+// Answer rules live in categoryRules.js. A word that is in the category's list counts at once; a
+// PLAUSIBLE word that is not listed (a real Arabic word, or a name) goes to a 12 s vote of the OTHER
+// players (✅/❌ buttons). The majority decides; with no votes or a tie the dictionary decides.
 
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const cfg = require('./config.js');
@@ -32,7 +34,6 @@ function shuffle(a) {
 function validAnswer(text, i, letter, used) { const v = rules.validate(text, i, letter, { used, crossCheck: c.crossCheck }); return v.ok && !v.vote; }
 
 const eligibleIds = (s) => s.ids.filter(id => !s.data.left.has(id));
-const maxAttemptsFor = (s) => c.maxAttempts || Math.min(c.maxAttemptsCap, Math.max(4, 2 * s.players.size));
 const num = (n) => (n > 0 ? `+${n}` : String(n));
 
 // ── The board ────────────────────────────────────────────────────────────────
@@ -136,14 +137,11 @@ function onMessage(s, message) {
   if (Date.now() > turn.deadline) return;                       // too late (the timer is about to fire)
 
   const v = rules.validate(content, turn.ci, turn.letter, { used: s.data.used, crossCheck: c.crossCheck });
+  if (!v.ok) return;                                            // chat / not an answer: ignored, the clock keeps running
   s.markActive(turn.userId);
-  if (v.ok) {
-    s.data.used.add(v.key);                                     // reserved immediately: nobody can reuse it
-    if (v.vote) turn.settle({ kind: 'unverified', answer: v.answer, key: v.key, dict: v.dict, suggestion: v.suggestion });
-    else turn.settle({ kind: 'correct', answer: v.answer, key: v.key });
-  } else {
-    turn.settle({ kind: 'wrong', reason: v.reason, suggestion: v.suggestion });
-  }
+  s.data.used.add(v.key);                                       // reserved immediately: nobody can reuse it
+  if (v.vote) turn.settle({ kind: 'unverified', answer: v.answer, key: v.key, dict: v.dict, suggestion: v.suggestion });
+  else turn.settle({ kind: 'correct', answer: v.answer, key: v.key });
 }
 
 /** A player gives up the game (button or leaving the server). Safe to call twice. */
@@ -224,31 +222,28 @@ function cleanup(s) {                                          // session ended:
   if (s.data && s.data.turn) s.data.turn.settle({ kind: 'aborted' });
 }
 
-// ── One category (retries with other players) ───────────────────────────────
+// ── One category: every player gets ONE attempt ─────────────────────────────
 async function playCategory(s, ci, letter) {
   const d = s.data;
   const cell = d.board[d.letterIdx].cats[ci];
-  const max = maxAttemptsFor(s);
-  let attempts = 0;
-  let queue = [];
+  const attempted = new Set();                                 // who has already had their turn for this category
   let last = d.lastPlayer || null;
 
-  while (attempts < max) {
+  for (;;) {
     if (s.status !== 'running') return 'aborted';
     const eligible = eligibleIds(s);
     if (eligible.length < 2) return 'few';
-    if (!queue.length) {
-      queue = shuffle(eligible);
-      if (queue.length > 1 && queue[0] === last) queue.push(queue.shift());   // not the same player twice in a row
-    }
-    const uid = queue.shift();
-    if (!eligible.includes(uid)) continue;
-    attempts++;
+    const waiting = eligible.filter(id => !attempted.has(id));
+    if (!waiting.length) break;                                // everybody has tried → nobody scores this category
+    const pool = shuffle(waiting);
+    if (pool.length > 1 && pool[0] === last) pool.push(pool.shift());   // not the same player twice in a row across categories
+    const uid = pool[0];
+    attempted.add(uid);
     last = uid;
     d.lastPlayer = uid;
     let r = await takeTurn(s, uid, ci, letter);
 
-    if (r.kind === 'unverified') {                             // not in the list: the other players decide
+    if (r.kind === 'unverified') {                             // plausible but not listed: the other players decide
       const ok = await voteOnWord(s, uid, r, ci, letter);
       if (s.status !== 'running') return 'aborted';
       r = ok ? { kind: 'correct', answer: r.answer, key: r.key }
@@ -256,9 +251,8 @@ async function playCategory(s, ci, letter) {
     }
     if (r.kind === 'aborted') return 'aborted';
     if (r.kind === 'left') {
-      attempts--;                                                // skipping a leaver is free
       await s.channel.send({ content: `⏭️ ${s.mention(uid)} غير متاح — ننتقل للاعب التالي.`, allowedMentions: { parse: [] } }).catch(() => {});
-      continue;
+      continue;                                                // a leaver's turn is skipped (and he is not eligible any more)
     }
     if (r.kind === 'correct') {
       cell.status = 'done'; cell.answer = r.answer; cell.userId = uid; cell.points = c.pointsCorrect;
@@ -267,13 +261,14 @@ async function playCategory(s, ci, letter) {
       await s.channel.send({ content: `✅ ${s.mention(uid)} إجابة صحيحة: **${r.answer}** (+${c.pointsCorrect})`, allowedMentions: { parse: [] } }).catch(() => {});
       return 'done';
     }
-    const why = r.kind === 'timeout' ? '⌛ انتهى الوقت!' : `❌ إجابة غير صحيحة — ${rules.REASONS_AR[r.reason] || 'غير مقبولة'}${r.suggestion ? ` (هل تقصد «${r.suggestion}»؟)` : ''}.`;
-    const more = attempts < max && eligibleIds(s).length >= 2;
-    await s.channel.send({ content: `${s.mention(uid)} ${why}${more ? ' ننتقل للاعب آخر لنفس الفئة…' : ''}`, allowedMentions: { parse: [] } }).catch(() => {});
+    // out of time (or the vote said no): no points, one short line, next player
+    const why = r.kind === 'timeout' ? '⌛ انتهى وقتك' : '❌ رفض اللاعبون الكلمة';
+    const more = eligibleIds(s).some(id => !attempted.has(id)) && eligibleIds(s).length >= 2;
+    await s.channel.send({ content: `${s.mention(uid)} ${why}.${more ? ' ننتقل للاعب آخر لنفس الفئة…' : ''}`, allowedMentions: { parse: [] } }).catch(() => {});
     await sleep(c.betweenTurnsMs);
   }
   cell.status = 'failed';
-  await s.channel.send(`⛔ فئة **${CATS[ci]}** (حرف ${letter}): **لم يُجَب** — ننتقل للتالية.`).catch(() => {});
+  await s.channel.send(`⛔ فئة **${CATS[ci]}** (حرف ${letter}): لم يُجب أحد — 0 نقطة. ننتقل للتالية.`).catch(() => {});
   return 'failed';
 }
 
@@ -297,7 +292,7 @@ async function start(s) {
 
   await s.channel.send({
     embeds: [new EmbedBuilder().setColor(0xEB459E).setTitle('🔤 إنسان حيوان نبات جماد بلاد')
-      .setDescription(`**${rounds}** جولات، حرف لكل جولة، و**5** فئات لكل حرف.\n• يُختار لاعب عشوائي لكل فئة ولديه **${Math.round(c.turnMs / 1000)} ثانية** ليكتب إجابته في الشات.\n• الإجابة الصحيحة = **${c.pointsCorrect}** نقاط. إن أخطأ أو انتهى وقته ينتقل الدور للاعب آخر لنفس الفئة.\n• الإجابات بالعربية فقط وتبدأ بالحرف المطلوب.`)],
+      .setDescription(`**${rounds}** جولات، حرف لكل جولة، و**5** فئات لكل حرف.\n• يُختار لاعب عشوائي لكل فئة ولديه **${Math.round(c.turnMs / 1000)} ثانية** ليكتب إجابته في الشات.\n• الإجابة الصحيحة = **${c.pointsCorrect}** نقاط. إن انتهى وقته ينتقل الدور للاعب آخر لنفس الفئة (لكل لاعب محاولة واحدة في الفئة).\n• الإجابات بالعربية فقط وتبدأ بالحرف المطلوب.`)],
     allowedMentions: { parse: [] },
   });
   await sleep(c.introMs);
