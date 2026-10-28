@@ -2,20 +2,16 @@
 // Answer validation for the categories game (إنسان حيوان نبات جماد بلاد).
 // Pure functions — no Discord, no database — so they are easy to test.
 //
-// An answer is accepted when ALL of this holds:
-//   1. it is Arabic letters only (spaces allowed; diacritics, tatweel and
-//      punctuation are ignored; digits / Latin letters are refused);
-//   2. 2–25 characters, not junk (letters repeated 3+ times, keyboard runs…);
-//   3. it really STARTS with the required letter — أ إ آ ا count as the same
-//      letter, and a leading «ال» is ignored («الأسد» starts with ا);
-//   4. the first word is not just the letter on its own («س بطيخ»);
-//   5. it is not fabricated by gluing the letter onto a real word («سفراولة»);
-//   6. it was not already given in this game.
-// Words in the lexicon (data/lexicon.js) for THIS category are accepted straight away.
-// Any other answer is not guessed at: validate() returns {ok:true, vote:true, dict, suggestion}
-// and the game asks the other players to confirm it (see categories.js). `dict` says whether it
-// is a real Arabic word (data/arwords.txt, ~255k words) — it breaks a tie / a vote nobody cast.
-// A one-letter misspelling of a known word is only a `suggestion`, never a rejection.
+// validate() sorts a message into ONE of three outcomes (the game only ever acts on the first two):
+//   • {ok:true}              a clear answer: in this category's list, right letter → points at once
+//   • {ok:true, vote:true}   a plausible answer that is not in the list (a real Arabic word, or a name) →
+//                            the other players vote
+//   • {ok:false, reason}     anything else: chat, «ما أدري», wrong letter, a word from another category,
+//                            made-up or misspelled words … → IGNORED by the game (no message, the turn's clock keeps running)
+// Pipeline: non-answer phrases → format → length/junk → forms of the word (with / without «ال») →
+//           category list → other categories → letter → fabricated «letter + word» → plausibility.
+// «ال» is only an article when it is spelled with a plain alef: «السمك» = «سمك», but «ألمانيا» (hamza) is
+// a whole word that starts with «أ».
 
 const { foldLetters } = require('./arabic.js');
 const { hasKeyboardRun } = require('../economy/engine/textFilter.js');
@@ -28,25 +24,37 @@ const MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭـ]/g;   // harakat, Quranic marks, tatweel
 const FOREIGN = /[A-Za-z0-9٠-٩۰-۹]/;
 const NOT_ARABIC = /[^ء-يٱپچژڤکگی\s]/g;
 
-// Letters of one word, folded (أ→ا, ى→ي, ة→ه …), and with a leading «ال» removed.
-function wordKey(w, stripAl = true) {
-  let k = foldLetters(w);
-  if (stripAl && k.startsWith('ال') && k.length >= 4) k = k.slice(2);
-  return k;
+const hasArticle = (raw) => /^[اٱ]ل/.test(raw.replace(MARKS, '')) && foldLetters(raw).length >= 4;   // «ال» with a plain alef
+
+/** All spellings of one typed word that could be the real word: as typed, and without the article «ال». */
+function wordForms(raw) {
+  const full = foldLetters(raw);
+  return hasArticle(raw) ? [full, full.slice(2)] : [full];
 }
 
-/** Comparable key of a whole answer ('' if it has no Arabic letters). */
+/** Every key an answer could be known by (words combined: with / without the article), most literal first. */
+function formsOf(text) {
+  const raw = String(text || '').replace(MARKS, '').replace(/[\p{P}\p{S}]/gu, ' ').replace(NOT_ARABIC, ' ');
+  const words = raw.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 4) return [];
+  let out = [''];
+  for (const w of words) {
+    const f = wordForms(w);
+    out = out.flatMap(prefix => f.map(x => (prefix ? prefix + ' ' : '') + x));
+  }
+  return [...new Set(out)];
+}
+
+/** The single key a LIST entry is stored under (an entry with a plain «ال» is stored without it). */
 function keyOf(text) {
   const raw = String(text || '').replace(MARKS, '').replace(/[\p{P}\p{S}]/gu, ' ').replace(NOT_ARABIC, ' ');
-  return raw.split(/\s+/).filter(Boolean).map(w => wordKey(w)).join(' ');
+  return raw.split(/\s+/).filter(Boolean).map(w => (hasArticle(w) ? foldLetters(w).slice(2) : foldLetters(w))).join(' ');
 }
 
 // ── lexicon sets ─────────────────────────────────────────────────────────────
 const SETS = CATS.map((cat) => new Set((LEXICON[cat] || []).map(keyOf).filter(Boolean)));
 for (const c of COUNTRIES) { SETS[4].add(keyOf(c.ar)); SETS[4].add(keyOf(c.capAr)); }
 const ANY = new Set(SETS.flatMap(s => [...s]));
-// Words of the four non-name categories: used to spot a misspelling of a known word.
-const KNOWN = [...new Set([1, 2, 3, 4].flatMap(j => [...SETS[j]]))];
 
 // ── general Arabic dictionary (lazy: only read the first time an unknown word shows up) ──────────
 let DICT = null;
@@ -90,60 +98,96 @@ function oneTypoApart(a, b) {
   return long.slice(i + 1).join('') === short.slice(i).join('');                                    // one letter missing/extra
 }
 
-/** A known word this answer is probably a misspelling of (same first letter), or null. */
-function nearMiss(key) {
-  if ([...key.replace(/\s/g, '')].length < 4) return null;
-  for (const w of KNOWN) if (w[0] === key[0] && oneTypoApart(key, w)) return w;
+/** A word of THIS category this answer is probably a misspelling of (same first letter), or null. Only a hint. */
+function nearMiss(key, i) {
+  if ([...key.replace(/\s/g, '')].length < 4 || key.includes(' ')) return null;
+  for (const w of SETS[i]) if (w[0] === key[0] && !w.includes(' ') && oneTypoApart(key, w)) return w;
   return null;
 }
 const inLexicon = (key, i) => SETS[i].has(key);
+const inSet = (forms, i) => forms.filter(f => SETS[i].has(f));
+
+// ── things that are talk, not answers ───────────────────────────────────────
+// «ما أدري», «مدري», «لا أعرف», «نسيت», questions, filler. They are never answers (and never start a vote).
+const FILLER_FIRST = new Set(['ما', 'لا', 'مو', 'مب', 'ماني', 'مني', 'ايش', 'شو', 'وش', 'ليش', 'كيف', 'هل', 'يعني', 'والله', 'طيب', 'اوك', 'اوكي',
+  'ايوه', 'اي', 'نعم', 'اظن', 'اعتقد', 'خلني', 'استنى', 'انتظر', 'لحظه', 'ثواني', 'دقيقه', 'هذا', 'هذي', 'هاذي', 'هذه', 'مين', 'وين', 'متى', 'ليه', 'احم', 'امم']);
+const FILLER_WHOLE = new Set(['مدري', 'مادري', 'ماعرف', 'ماعلم', 'نسيت', 'يعني', 'والله', 'طيب', 'اوك', 'اوكي', 'لحظه', 'ثواني', 'شو', 'ايش', 'وش', 'ليش', 'كيف', 'هل',
+  'احم', 'امم', 'مدري والله', 'ولا شي', 'ولا شيء']);
+/** True when the text is chat («ما أدري», «مدري», «ايش اكتب») and could never be a category answer. */
+function isNonAnswer(text) {
+  const words = String(text || '').replace(MARKS, '').replace(/[\p{P}\p{S}]/gu, ' ').split(/\s+/).filter(Boolean).map(w => foldLetters(w));
+  if (!words.length) return false;
+  const joined = words.join(' ');
+  if (FILLER_WHOLE.has(joined)) return true;
+  if (words.length >= 2 && FILLER_FIRST.has(words[0])) return true;
+  if (/^(?:ما|لا|مو|مب)ا?(?:ادري|اعرف|اعلم|عارف|اتذكر|يحضرني|عندي|اعرفها|اعرفه)$/.test(words.join(''))) return true;
+  return false;
+}
+
+/** A word that is not in the category's list but could still be right → the players may vote on it. */
+function plausible(key, i, real) {
+  const words = key.split(' ');
+  if (i === 0) return words.length <= 2 && words.every(w => w.length >= 3);          // names: any 1–2 word name; players judge
+  if (words.length > 3) return false;
+  return real !== false;                                                              // real Arabic words only (null = no dictionary → let players decide)
+}
 
 /**
  * @param {string} text   what the player typed
  * @param {number} i      category index (0 إنسان … 4 بلاد)
  * @param {string} letter required letter (any hamza form)
  * @param {{used?:Set<string>, crossCheck?:boolean}} [opts]
- * @returns {{ok:boolean, reason?:string, key?:string, answer?:string}}
- *   reason: empty | format | short | long | letter | single | junk | fabricated | category | dup
- *   ok with vote:true → not in the category list; players must confirm (dict: real word? / suggestion)
+ * @returns {{ok:boolean, reason?:string, key?:string, answer?:string, vote?:boolean}}
+ *   reason: empty | nonanswer | format | short | long | letter | single | junk | fabricated | category | dup | implausible
  */
 function validate(text, i, letter, opts = {}) {
   const used = opts.used || null;
   const crossCheck = opts.crossCheck !== false;
   const t = String(text == null ? '' : text).trim();
   if (!t) return { ok: false, reason: 'empty' };
+  if (isNonAnswer(t)) return { ok: false, reason: 'nonanswer' };                  // «ما أدري» is not an animal
   if (FOREIGN.test(t)) return { ok: false, reason: 'format' };
 
   const stripped = t.replace(MARKS, '').replace(/[\p{P}\p{S}]/gu, ' ').trim();
   if (!stripped || /[^ء-يٱپچژڤکگی\s]/.test(stripped)) return { ok: false, reason: 'format' };
+  const answer = stripped.replace(/\s+/g, ' ');
 
   const rawWords = stripped.split(/\s+/).filter(Boolean);
   const folded0 = foldLetters(rawWords[0]);
   if (folded0.length < 2 || folded0 === 'ال') return { ok: false, reason: 'single' };   // «س بطيخ», «ال بطيخ»
 
-  const key = keyOf(t);
-  const letters = key.replace(/\s/g, '');
+  const forms = formsOf(t);
+  if (!forms.length) return { ok: false, reason: 'long' };
+  const want = [...foldLetters(String(letter))][0];
+  const lettersOf = (f) => f.replace(/\s/g, '');
+  const starts = (f) => [...f][0] === want;
+
+  // The best reading of the answer that is in this category's list (prefer one that starts with the letter).
+  const hits = inSet(forms, i);
+  const hit = hits.find(starts) || hits[0] || null;
+  const key = hit || forms[forms.length - 1];                // unknown word: «ال» is an article → use the word without it
+
   // Very short words («دي») only count when they are really in this category's list.
-  if (letters.length < 2 || (letters.length < 3 && !inLexicon(key, i))) return { ok: false, reason: 'short' };
+  if (lettersOf(key).length < 2 || (lettersOf(key).length < 3 && !hit)) return { ok: false, reason: 'short' };
   if (key.length > 25) return { ok: false, reason: 'long' };
 
   // junk: the same letter 3+ times in a row, one repeated letter, keyboard runs
-  if (/(.)\1\1/u.test(letters) || new Set(letters).size < 2) return { ok: false, reason: 'junk' };
+  const L = lettersOf(key);
+  if (/(.)\1\1/u.test(L) || new Set(L).size < 2) return { ok: false, reason: 'junk' };
   for (const w of key.split(' ')) {
     if (w.length >= 5 && hasKeyboardRun(w)) return { ok: false, reason: 'junk' };
     if (w.length >= 6 && new Set(w).size / w.length <= 0.34) return { ok: false, reason: 'junk' };
   }
 
-  if ([...key][0] !== [...foldLetters(String(letter))][0]) return { ok: false, reason: 'letter' };
-
+  if (!starts(key)) return { ok: false, reason: 'letter' };
   if (used && used.has(key)) return { ok: false, reason: 'dup', key };
 
-  if (inLexicon(key, i)) return { ok: true, key, answer: stripped.replace(/\s+/g, ' ') };
+  if (hit) return { ok: true, key, answer };                // a listed word: accepted at once
 
-  // Not in this category's list. A real word from ANOTHER category (a car as an
+  // Not in this category's list. A real word from ANOTHER category (a car as an animal, a city as an
   // animal) is wrong. Names (إنسان) are left alone: many names are also words.
   if (crossCheck && i !== 0) {
-    for (const j of [1, 2, 3, 4]) if (j !== i && inLexicon(key, j) && !inLexicon(key, i)) return { ok: false, reason: 'category', key };
+    for (const j of [1, 2, 3, 4]) if (j !== i && inSet(forms, j).length) return { ok: false, reason: 'category', key };
   }
 
   // Fabrication: the letter glued onto a real word («س» + «فراولة»).
@@ -153,13 +197,18 @@ function validate(text, i, letter, opts = {}) {
     const rest = [first.slice(1).join(''), ...words.slice(1)].join(' ');
     if (ANY.has(rest) && !ANY.has(key)) return { ok: false, reason: 'fabricated', key };
   }
-  // Not in this category's list: the other players decide. A near miss of a known word is only a hint.
-  const near = nearMiss(key);
-  return { ok: true, vote: true, dict: isRealAnswer(key), suggestion: near || undefined, key, answer: stripped.replace(/\s+/g, ' ') };
+
+  // Plausible but unlisted → the players vote. Made-up or unrelated text is simply ignored.
+  const real = isRealAnswer(key);
+  if (!plausible(key, i, real)) return { ok: false, reason: 'implausible', key };
+  const near = nearMiss(key, i);
+  return { ok: true, vote: true, dict: real, suggestion: near || undefined, key, answer };
 }
 
 const REASONS_AR = {
   empty: 'رسالة فارغة',
+  nonanswer: 'ليست إجابة',
+  implausible: 'كلمة غير معروفة',
   format: 'يجب أن تكون الإجابة بالحروف العربية فقط',
   single: 'اكتب الكلمة كاملة وليس الحرف وحده',
   short: 'الكلمة قصيرة جدًا',
@@ -172,4 +221,4 @@ const REASONS_AR = {
   vote: 'لم يوافق اللاعبون على هذه الكلمة',
 };
 
-module.exports = { validate, keyOf, CATS, REASONS_AR, inLexicon, SETS, isRealAnswer, nearMiss };
+module.exports = { validate, keyOf, formsOf, isNonAnswer, CATS, REASONS_AR, inLexicon, SETS, isRealAnswer, nearMiss };
