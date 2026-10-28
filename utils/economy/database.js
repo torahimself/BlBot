@@ -187,9 +187,14 @@ db.serialize(() => {
             status TEXT,
             result TEXT,
             progressChannelId TEXT,
-            progressMessageId TEXT
+            progressMessageId TEXT,
+            firstTo100UserId TEXT
         )
     `);
+    // Migration for databases created before the "first to 100 Candy" shout-out existed.
+    db.run("ALTER TABLE event_state ADD COLUMN firstTo100UserId TEXT", (err) => {
+        if (err && !/duplicate column/i.test(err.message)) console.error('Error adding event_state.firstTo100UserId column:', err.message);
+    });
     db.run(`
         CREATE TABLE IF NOT EXISTS event_points (
             eventId TEXT,
