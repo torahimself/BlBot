@@ -71,7 +71,7 @@ async function ensureGameDaysTable() {
     PRIMARY KEY (eventId, userId, day))`);
 }
 
-async function recordGames(userIds, now = Date.now(), credited = null) {   // `credited` (optional array) receives the ids that got the point
+async function recordGames(userIds, now = Date.now(), credited = null, client = null) {   // `credited` (optional array) receives the ids that got the point
   const ev = current();
   if (!ev || phase(now, ev) !== 'active') return 0;
   const perDay = ev.points.gamesPerDayMax || 0;
@@ -90,6 +90,7 @@ async function recordGames(userIds, now = Date.now(), credited = null) {   // `c
       n++;
       if (credited) credited.push(id);
     });
+    await checkFirstTo100(id, now, client);
   }
   return n;
 }
@@ -109,6 +110,7 @@ async function getState(ev) {
     await ensureGameDaysTable();
     await dbx.run('DELETE FROM event_game_days WHERE eventId = ?', [ev.id]);
     await dbx.run('DELETE FROM event_rewards WHERE eventId = ?', [ev.id]);
+    await dbx.run('UPDATE event_state SET firstTo100UserId = NULL WHERE eventId = ?', [ev.id]);
   }
 
   await dbx.run(
@@ -118,6 +120,51 @@ async function getState(ev) {
   // Keep the stored schedule in step with settings.js until the event is being finalised.
   await dbx.run("UPDATE event_state SET startAt = ?, endAt = ? WHERE eventId = ? AND status = 'scheduled'", [startAt, endAt, ev.id]);
   return dbx.get('SELECT * FROM event_state WHERE eventId = ?', [ev.id]);
+}
+
+/**
+ * Shout-out for the first member to reach 100/100 Candy (the max score) in
+ * the current event. Posted once per event, in ev.firstTo100ChannelId,
+ * pinging that member plus ev.firstTo100MentionUserId. Safe to call after
+ * every credit: the UPDATE below only succeeds for whichever call is first
+ * to see firstTo100UserId still NULL, so it can never fire twice even if two
+ * members cross 100 in the same instant.
+ */
+async function checkFirstTo100(userId, now = Date.now(), client = null) {
+  try {
+    const ev = current();
+    if (!ev || !ev.firstTo100ChannelId || phase(now, ev) !== 'active') return;
+
+    const row = await dbx.get('SELECT textChars, voiceMinutes, games FROM event_points WHERE eventId = ? AND userId = ?', [ev.id, userId]);
+    if (!row) return;
+    const { total } = pointsOf(ev, row);
+    if (total < 100) return;
+
+    const claim = await dbx.run(
+      'UPDATE event_state SET firstTo100UserId = ? WHERE eventId = ? AND firstTo100UserId IS NULL',
+      [userId, ev.id]
+    );
+    if (!claim || !claim.changes) return;   // someone else already claimed it
+
+    await announceFirstTo100(ev, userId, client);
+  } catch (err) {
+    console.error('[Economy] first-to-100 check failed:', err);
+  }
+}
+
+async function announceFirstTo100(ev, userId, client) {
+  if (!client || !client.channels) return;
+  try {
+    const ch = await client.channels.fetch(ev.firstTo100ChannelId);
+    if (!ch || !ch.isTextBased()) return;
+    const mentions = [userId, ev.firstTo100MentionUserId].filter(Boolean);
+    await ch.send({
+      content: `🍬 <@${userId}> is the first to hit **100/100 Candy** in ${ev.emoji} **${ev.name}**! ${ev.firstTo100MentionUserId ? `<@${ev.firstTo100MentionUserId}>` : ''}`.trim(),
+      allowedMentions: { users: mentions },
+    });
+  } catch (err) {
+    console.error('[Economy] first-to-100 announcement failed:', err.message);
+  }
 }
 
 // Community totals, computed in SQL so it scales to thousands of members.
@@ -295,5 +342,5 @@ async function updateProgressMessage(client, now = Date.now()) {
 
 module.exports = {
   current, window, phase, pointsOf, progressSql, recordGames, communityAgg, summary,
-  finalizeIfDue, updateProgressMessage, getState,
+  finalizeIfDue, updateProgressMessage, getState, checkFirstTo100,
 };
