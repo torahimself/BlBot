@@ -6,6 +6,7 @@ const gameHandler = require('../handlers/gameHandler.js');
 const warnHistoryUI = require('../utils/warn/warnHistoryUI.js');
 const partyGames = require('../utils/games/index.js');
 const economyViews = require('../utils/economy/engine/views.js');
+const uiCustomize = require('../utils/ui/customize.js');
 
 const MODAL_COMMANDS = ['buyrole', 'editrole'];
 const processingBuyRole = new Set();
@@ -68,6 +69,12 @@ module.exports = {
     // ---------- PARTY GAMES (buttons, select menus, forms with customId "pg:…") ----------
     if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && String(interaction.customId).startsWith('pg:')) {
       await partyGames.handleInteraction(interaction);
+      return;
+    }
+
+    // ---------- PICTURE UI: the 🎨 Customize panel (customId "ui:…") ----------
+    if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && String(interaction.customId).startsWith('ui:')) {
+      await uiCustomize.handle(interaction);
       return;
     }
 
