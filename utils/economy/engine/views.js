@@ -134,7 +134,8 @@ function groupPotions(rows, type) {
   return [...counts.entries()].sort((a, b) => a[0] - b[0]);
 }
 
-async function inventoryPayload(userId, { now = Date.now(), notice = '' } = {}) {
+/** Everything the inventory screen shows (also drawn as a picture by utils/ui/inventoryCard.js). */
+async function inventoryState(userId, now = Date.now()) {
   const [bal, potions, active, usage, net] = await Promise.all([
     dbx.get('SELECT balance FROM users WHERE userId = ?', [userId]),
     boosts.inventory(userId),
@@ -142,6 +143,17 @@ async function inventoryPayload(userId, { now = Date.now(), notice = '' } = {}) 
     activity.weeklyUsage(userId, now),
     betting.weeklyNet(userId, now),
   ]);
+  return { balance: bal ? bal.balance : 0, potions, active, usage, net, now };
+}
+
+/**
+ * The inventory message. `user` ({name, avatarUrl}) makes it a picture in the member's own style;
+ * without it (or without the canvas module) it is the classic embed.
+ */
+async function inventoryPayload(userId, { now = Date.now(), notice = '', user = null } = {}) {
+  const st = await inventoryState(userId, now);
+  const { potions, active, usage, net } = st;
+  const bal = { balance: st.balance };
 
   const mult = settings.potions.multiplier;
   const activeTypes = new Set(active.map((b) => b.type));
@@ -204,7 +216,15 @@ async function inventoryPayload(userId, { now = Date.now(), notice = '' } = {}) 
   }
   const waiting = potions.filter((p) => activeTypes.has(p.type)).length;
   const hint = waiting ? `\n-# ${waiting} potion(s) are waiting: a boost of the same type is still running.` : '';
-  return { content: `${notice}${hint}`.trim() || null, embeds: [embed], components };
+  const content = `${notice}${hint}`.trim() || null;
+  if (user) {
+    try {
+      const ui = require('../../ui');                              // lazy: ui → views → ui would otherwise be circular
+      const img = await ui.inventoryImage({ userId, user, state: st });
+      if (img) return { content, embeds: [], files: [img], attachments: [], components, allowedMentions: { parse: [] } };
+    } catch (err) { console.error('[UI] inventory picture failed, using the embed:', err); }
+  }
+  return { content, embeds: [embed], files: [], attachments: [], components };
 }
 
 /** Handles the "activate a potion" menu. Returns true if the interaction was ours. */
@@ -235,7 +255,9 @@ async function handleInventorySelect(interaction) {
       notice = '❌ You no longer have that potion.';
     }
   }
-  await interaction.update(await inventoryPayload(ownerId, { notice }));
+  let user = null;
+  try { user = require('../../ui/customize').whoIs(interaction); } catch (_) { user = null; }
+  await interaction.update(await inventoryPayload(ownerId, { notice, user }));
   return true;
 }
 
@@ -316,6 +338,6 @@ function eventEmbed(s) {
 
 module.exports = {
   profileData, profileEmbed, buildProfile,
-  inventoryPayload, handleInventorySelect,
+  inventoryPayload, handleInventorySelect, inventoryState, groupPotions, earnedTiers,
   eventEmbed, communityEmbed, titleInfo, INV_PREFIX,
 };
