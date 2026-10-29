@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const views = require('../../utils/economy/engine/views.js');
+const ui = require('../../utils/ui');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,6 +23,14 @@ module.exports = {
       }
     }
 
+    // A picture in the member's own style; the classic embed is the fallback (no canvas module, or any error).
+    try {
+      const data = await views.profileData(user.id);
+      const payload = await ui.profilePayload({ viewerId: interaction.user.id, userId: user.id, name, avatarUrl, data });
+      if (payload) return interaction.editReply(payload);
+    } catch (err) {
+      console.error('[UI] profile picture failed, using the embed:', err);
+    }
     const embed = await views.buildProfile(user.id, name, avatarUrl);
     await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
   },
