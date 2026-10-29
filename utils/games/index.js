@@ -50,6 +50,34 @@ function parseTrigger(content) {
   return { type, bet };
 }
 
+const STOP_WORDS = new Set((cfg.trigger.stopWords || []).map(fold));
+/** ".توقف" → true (the message is the stop command). */
+function isStopCommand(content) {
+  const sign = cfg.trigger.sign;
+  if (typeof content !== 'string' || !content.startsWith(sign)) return false;
+  const parts = content.slice(sign.length).trim().split(/\s+/).filter(Boolean);
+  return parts.length === 1 && STOP_WORDS.has(fold(parts[0]));
+}
+
+/** The host of the game, or a member who can manage messages (a moderator), may stop it. */
+function canStop(s, message) {
+  if (s.hostId === message.author.id || s.starterId === message.author.id) return true;
+  const perms = message.member && message.member.permissions;
+  return !!(perms && typeof perms.has === 'function' && (perms.has('ManageMessages') || perms.has('Administrator')));
+}
+
+/** Stops the game running in this channel. Returns true when the message was a stop command. */
+async function handleStop(message, s) {
+  if (!s || s.status === 'done') return true;                       // nothing to stop: stay quiet
+  if (!canStop(s, message)) {
+    const note = await message.reply({ content: `⛔ فقط من بدأ اللعبة (<@${s.starterId || s.hostId}>) أو المشرف يستطيع إيقافها.`, allowedMentions: { parse: [] } }).catch(() => null);
+    if (note && typeof note.delete === 'function') setTimeout(() => note.delete().catch(() => {}), 6000);
+    return true;
+  }
+  await s.abort(`⏹️ أوقفها <@${message.author.id}>.`);
+  return true;
+}
+
 const channelAllowed = (id) => !cfg.channels || !cfg.channels.length || cfg.channels.includes(id);
 
 async function startFromMessage(message, trig) {
@@ -79,6 +107,8 @@ async function handleMessage(message) {
     if (s && s.status === 'running' && s.def.onMessage) {
       try { s.def.onMessage(s, message); } catch (e) { console.error('[Party] onMessage failed:', e); }
     }
+
+    if (isStopCommand(message.content)) return await handleStop(message, s);
 
     const trig = parseTrigger(message.content);
     if (!trig) return false;
@@ -142,4 +172,4 @@ async function handleInteraction(interaction) {
 // Hand back stakes of games interrupted by a restart (once, after the DB is ready).
 dbx.get('SELECT 1').then(() => session.init()).catch(() => {});
 
-module.exports = { parseTrigger, handleMessage, handleInteraction };
+module.exports = { parseTrigger, isStopCommand, handleMessage, handleInteraction };
