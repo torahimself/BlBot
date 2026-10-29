@@ -365,6 +365,30 @@ const hostCalls = (f, host) => f.calls.filter(u => new URL(u).host === host).len
     for (let i = 0; i < 100 && session.sessions.size; i++) await sleep(50);
     G.rounds = 2; G.roundMs = 3000;
   });
+  await t('.توقف — only the player who started the game can stop it (running or lobby); stakes come back; others are told no', async () => {
+    photos.resetHealth(); geo.setFetch(router());
+    G.rounds = 3; G.roundMs = 5000;
+    const { ch, s } = await newGame(100, ['A', 'B', 'C']);
+    await waitRound(s);
+    const no = await say(ch, 'B', '.توقف');
+    assert(/فقط من بدأ اللعبة/.test(noteTexts(no)), 'a non-starter is refused'); assert.strictEqual(s.status, 'running', 'game continues');
+    const bye = await say(ch, 'Z', '.توقف'); assert.strictEqual(s.status, 'running', 'a stranger cannot stop it either');
+    assert.strictEqual(await bal('A'), 9900);
+    await say(ch, 'A', '.توقف');
+    assert.strictEqual(s.status, 'done', 'stopped'); assert.strictEqual(session.sessions.size, 0);
+    assert(ch.sent.some(m => /أوقفها <@A>/.test(m.content || '')), 'announced');
+    assert.strictEqual(await bal('A'), 10000); assert.strictEqual(await bal('B'), 10000); assert.strictEqual(await bal('C'), 10000, 'all stakes refunded');
+    await sleep(300); assert.strictEqual(s.timers.size, 0, 'no timers left running');
+    // lobby
+    await setBal('A', 10000);
+    const ch2 = mkChannel(); await games.handleMessage(mkMessage(ch2, 'A', '.جيو 500'));
+    const l = session.sessionInChannel(ch2.id); assert(l && l.status === 'lobby'); assert.strictEqual(await bal('A'), 9500);
+    await say(ch2, 'A', '.إيقاف');
+    assert.strictEqual(session.sessionInChannel(ch2.id), undefined); assert.strictEqual(await bal('A'), 10000);
+    // nothing running → ignored
+    const idle = await say(ch2, 'A', '.توقف'); assert.strictEqual(idle.replies.length, 0);
+    G.rounds = 2; G.roundMs = 3000;
+  });
   await t('hints appear at 1/3 and 2/3 of the round', async () => {
     photos.resetHealth(); geo.setFetch(router());
     G.rounds = 1; G.roundMs = 900;
