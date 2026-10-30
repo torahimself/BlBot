@@ -34,6 +34,7 @@ class Session {
     this.channel = channel;
     this.channelId = channel.id;
     this.hostId = host;
+    this.starterId = host;        // who typed the trigger (the host can change if he leaves the lobby)
     this.bet = bet || 0;
     this.players = new Map();     // userId → { id, name, active, paid }
     this.status = 'lobby';        // lobby | starting | running | done
