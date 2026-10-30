@@ -215,7 +215,10 @@ class Session {
     let noteText = '';
     let result = null;
     if (this.bet > 0) {
-      if (!winners.length) {
+      if (ids.length < 2) {
+        for (const id of ids) await this.refundOne(id);
+        noteText = '\n💸 لعبت وحدك — تم إرجاع الرهان.';
+      } else if (!winners.length) {
         for (const id of ids) await this.refundOne(id);
         noteText = '\n💸 لا يوجد فائز — تم إرجاع الرهانات.';
       } else {
@@ -249,7 +252,7 @@ class Session {
         const real = ids.length >= cfg.eventCredit.minPlayers && took >= cfg.eventCredit.minDurationMs;
         const who = (active || this.ids).filter(id => ids.includes(id));
         if (!real) {
-          noteText += `\n-# 🍬 لم تُحتسب هذه اللعبة في الفعالية — تحتاج ${cfg.eventCredit.minPlayers} لاعبين على الأقل ومدة ${Math.round(cfg.eventCredit.minDurationMs / 1000)} ثانية.`;
+          noteText += `\n-# 🍬 لم تُحتسب هذه اللعبة في الفعالية — تحتاج أن تستمر ${Math.round(cfg.eventCredit.minDurationMs / 1000)} ثانية على الأقل.`;
         } else if (who.length) {
           const got = [];
           await events.recordGames(who, Date.now(), got, this.channel && this.channel.client);
