@@ -23,6 +23,8 @@ module.exports = {
     maxBet: 10000,
     // «.توقف» — the member who started the game (or a moderator) stops it; every stake is refunded.
     stopWords: ['توقف', 'ايقاف', 'وقف', 'ستوب'],
+    // «.العاب» — shows every game with a one-line explanation.
+    helpWords: ['العاب', 'ألعاب', 'الالعاب', 'قائمة'],
   },
 
   lobby: {
@@ -35,11 +37,11 @@ module.exports = {
 
   // A finished game earns Halloween-event "games" points only when it was real.
   eventCredit: {
-    minPlayers: 2,
+    minPlayers: 1,           // solo games count too (still capped per day, and 30 s minimum)
     minDurationMs: 30 * 1000,
   },
 
-  guess:      { min: 2, max: 10, roundMs: 20 * 1000, hintAfterMs: 10 * 1000, rounds: 8 },
+  guess:      { min: 1, max: 10, roundMs: 20 * 1000, hintAfterMs: 10 * 1000, rounds: 8 },
   roulette:   { min: 3, max: 12, pickMs: 15 * 1000, pauseMs: 2500, revealPadMs: 700 },
   // Street-photo game (.جيو): a photo is shown, players TYPE the COUNTRY (Arabic or English). The first valid
   // guess is final, a country can be taken once per round, the right country scores 40, others by distance.
@@ -48,7 +50,7 @@ module.exports = {
   geo: {
     mapillaryToken: '',          // or set the MAPILLARY_TOKEN environment variable
     providers: ['mapillary', 'wikimedia'],   // order tried; remove one to turn it off
-    min: 2, max: 10, rounds: 5,
+    min: 1, max: 10, rounds: 5,
     roundMs: 50 * 1000,          // hints come at 1/3 and 2/3 of this
     allGuessedGraceMs: 1500,     // when everybody has chosen a country the round ends this long after the last one
     introMs: 2500, pauseMs: 6000,
@@ -63,7 +65,7 @@ module.exports = {
   },
   mafia:      { min: 5, max: 12, nightMs: 35 * 1000, talkMs: 45 * 1000, voteMs: 30 * 1000 },
   categories: {
-    min: 2, max: 8,
+    min: 1, max: 8,
     rounds: 5,                    // letters per game (one letter per round, all 5 categories each)
     turnMs: 15 * 1000,            // time a picked player has to type an answer
     pointsCorrect: 10,
