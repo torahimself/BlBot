@@ -51,6 +51,30 @@ function parseTrigger(content) {
 }
 
 const STOP_WORDS = new Set((cfg.trigger.stopWords || []).map(fold));
+const HELP_WORDS = new Set((cfg.trigger.helpWords || []).map(fold));
+function isHelpCommand(content) {
+  const sign = cfg.trigger.sign;
+  if (typeof content !== 'string' || !content.startsWith(sign)) return false;
+  const parts = content.slice(sign.length).trim().split(/\s+/).filter(Boolean);
+  return parts.length === 1 && HELP_WORDS.has(fold(parts[0]));
+}
+
+function helpEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  const sg = cfg.trigger.sign;
+  const n = (d) => (d.min <= 1 ? `1–${d.max}` : `${d.min}–${d.max}`) + ' لاعبين';
+  const line = (emoji, title, cmd, d, text) => `${emoji} **${title}** — \`${sg}${cmd}\` · ${n(d)}\n${text}`;
+  return new EmbedBuilder().setColor(0x5865F2).setTitle('🎮 الألعاب')
+    .setDescription([
+      line('🌍', 'أعلام', 'علم', cfg.guess, 'خمّن الدولة من علمها، الأسرع يفوز.'),
+      line('🏛️', 'عواصم', 'عاصمة', cfg.guess, 'خمّن الدولة من عاصمتها.'),
+      line('📍', 'جيو', 'جيو', cfg.geo, 'صورة من مكان حقيقي — اكتب اسم الدولة، والأقرب يأخذ نقاط أكثر.'),
+      line('🔤', 'إنسان حيوان', 'انسان', cfg.categories, 'حرف وخمس فئات، اكتب كلمة صحيحة بالحرف في 15 ثانية.'),
+      line('🎡', 'روليت الطرد', 'روليت', cfg.roulette, 'العجلة تختار لاعبًا يطرد غيره، آخر من يبقى يفوز.'),
+      line('🎭', 'مافيا', 'مافيا', cfg.mafia, 'المافيا تقتل ليلًا والمواطنون يصوّتون نهارًا.'),
+    ].join('\n\n') + `\n\n💰 أضف رهانًا بعد الأمر: \`${sg}علم 500\` · ⏹️ \`${sg}توقف\` يوقف لعبتك`);
+}
+
 /** ".توقف" → true (the message is the stop command). */
 function isStopCommand(content) {
   const sign = cfg.trigger.sign;
@@ -109,6 +133,16 @@ async function handleMessage(message) {
     }
 
     if (isStopCommand(message.content)) return await handleStop(message, s);
+
+    if (isHelpCommand(message.content)) {
+      if (!channelAllowed(message.channel.id)) {
+        const note = await message.reply({ content: `🎮 الألعاب فقط في: ${require('../gameChannels.js').IDS.map(id => `<#${id}>`).join(' • ')}`, allowedMentions: { parse: [] } }).catch(() => null);
+        if (note) setTimeout(() => note.delete().catch(() => {}), 8000);
+        return true;
+      }
+      await message.reply({ embeds: [helpEmbed()], allowedMentions: { parse: [] } }).catch(() => {});
+      return true;
+    }
 
     const trig = parseTrigger(message.content);
     if (!trig) return false;
@@ -172,4 +206,4 @@ async function handleInteraction(interaction) {
 // Hand back stakes of games interrupted by a restart (once, after the DB is ready).
 dbx.get('SELECT 1').then(() => session.init()).catch(() => {});
 
-module.exports = { parseTrigger, isStopCommand, handleMessage, handleInteraction };
+module.exports = { parseTrigger, isStopCommand, isHelpCommand, helpEmbed, handleMessage, handleInteraction };
