@@ -89,11 +89,11 @@ function aboutModal(userId, current) {
   );
 }
 function colorModal(userId, current) {
+  const input = new TextInputBuilder().setCustomId('hex').setLabel('Colour in hex, like #FF8A1F')
+    .setStyle(TextInputStyle.Short).setMinLength(6).setMaxLength(7).setRequired(true).setPlaceholder('#FF8A1F');
+  if (current && current.length >= 6) input.setValue(current);   // an empty/short prefill breaks min-length and Discord rejects the whole modal
   return new ModalBuilder().setCustomId(`ui:m:color:${userId}`).setTitle('Custom colour').addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId('hex').setLabel('Colour in hex, like #FF8A1F')
-        .setStyle(TextInputStyle.Short).setMinLength(6).setMaxLength(7).setRequired(true).setValue(current || '').setPlaceholder('#FF8A1F')
-    )
+    new ActionRowBuilder().addComponents(input)
   );
 }
 
