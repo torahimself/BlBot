@@ -18,6 +18,9 @@ module.exports = {
       categories: ['انسان', 'انسان_حيوان', 'حروف'],
       roulette:   ['روليت', 'روليت_الطرد', 'عجلة'],
       geo:        ['جيو', 'شارع', 'صورة'],
+      typing:     ['كتابة', 'اسرع', 'سرعة'],
+      chain:      ['سلسلة', 'كلمات'],
+      math:       ['حساب', 'رياضيات', 'مسائل'],
     },
     minBet: 10,
     maxBet: 10000,
@@ -63,6 +66,10 @@ module.exports = {
     parkAfterFails: 2, parkMs: 10 * 60 * 1000,   // a provider failing twice in a row is skipped for 10 minutes
     fetch: null,                 // tests inject a fake here
   },
+  // Quick-fire games (all work alone too).
+  typing: { min: 1, max: 10, rounds: 6, roundMs: 25 * 1000, introMs: 2500, pauseMs: 2000, minMsPerChar: 70 },
+  math:   { min: 1, max: 10, rounds: 8, roundMs: 15 * 1000, introMs: 2500, pauseMs: 1800 },
+  chain:  { min: 1, max: 8, turnMs: 20 * 1000, minTurnMs: 9 * 1000, speedUpMs: 500, maxWords: 60, soloWinAt: 5, introMs: 3000 },
   mafia:      { min: 5, max: 12, nightMs: 35 * 1000, talkMs: 45 * 1000, voteMs: 30 * 1000 },
   categories: {
     min: 1, max: 8,
