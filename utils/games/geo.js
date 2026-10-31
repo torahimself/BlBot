@@ -113,6 +113,7 @@ async function start(s) {
     // ── the round's result: distances, points, map ──
     const rows = resolveRound(s, cur);
     for (const r of rows) s.data.scores.set(r.id, (s.data.scores.get(r.id) || 0) + r.pts);
+    for (const r of rows) if (r.right) await s.awardBadge(r.id, 'pinpoint');
     await showResult(s, cur, rows, i + 1, rounds);
     await sleep(g().pauseMs);
   }
