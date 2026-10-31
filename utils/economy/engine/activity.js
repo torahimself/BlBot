@@ -140,6 +140,7 @@ async function creditLocked(userId, source, units, now, client, rng) {
  */
 async function credit(userId, source, units, opts = {}) {
   if (!SOURCES[source]) throw new Error(`Unknown activity source: ${source}`);
+  if (require('../../blocklist.js').isBlocked(userId)) return { counted: false, coins: 0, units: 0, reason: 'nothing' };
   units = Math.floor(units);
   if (!(units > 0)) return { counted: false, coins: 0, units: 0, reason: 'nothing' };
   const now = opts.now ?? Date.now();
