@@ -18,6 +18,7 @@ const { spendCoins, updateBalance, getBalance } = require('../economy/shopManage
 const stakes = require('../economy/stakes.js');
 const gameManager = require('../economy/gameManager.js');
 const gameStats = require('./stats.js');
+const badges = require('./badges.js');
 
 const sessions = new Map();     // id → Session
 const byChannel = new Map();    // channelId → id
@@ -34,6 +35,7 @@ class Session {
     this.channel = channel;
     this.channelId = channel.id;
     this.hostId = host;
+    this.badgeNotes = [];          // badges given mid-game (e.g. a geo pinpoint), shown in the result
     this.starterId = host;        // who typed the trigger (the host can change if he leaves the lobby)
     this.bet = bet || 0;
     this.players = new Map();     // userId → { id, name, active, paid }
@@ -153,6 +155,16 @@ class Session {
     this.autoStartTimer = this.later(() => this.start(), wait);
   }
 
+  /** Gives a special badge (once per member, ever) and mentions it in the final result. */
+  async awardBadge(userId, key) {
+    try {
+      if (await badges.grant(userId, key)) {
+        const b = badges.info(badges.idOf(key));
+        if (b) this.badgeNotes.push(`${b.emoji} **${b.name}**  ← ${this.mention(userId)}`);
+      }
+    } catch (e) { console.error('[Party] badge failed:', e); }
+  }
+
   async start() {
     if (this.status !== 'lobby') return;
     if (this.players.size < this.def.min) return;
@@ -241,7 +253,16 @@ class Session {
     }
 
     // Plays / wins per game (for stats). Never blocks or breaks the result.
-    gameStats.record(this.type, (active || ids).filter(id => ids.includes(id)), winners).catch((e) => console.error('[Party] stats failed:', e));
+    try {
+      await gameStats.record(this.type, (active || ids).filter(id => ids.includes(id)), winners);
+      const lines = [];
+      for (const id of [...new Set([...(active || ids), ...winners])]) {
+        if (!ids.includes(id)) continue;
+        for (const b of await badges.check(id)) lines.push(`${b.emoji} **${b.name}**  ← ${this.mention(id)}`);
+      }
+      for (const n of this.badgeNotes) lines.push(n);
+      if (lines.length) noteText += `\n🏅 **وسام جديد!**\n${lines.join('\n')}`;
+    } catch (e) { console.error('[Party] stats/badges failed:', e); }
 
     // Halloween event: a real, finished game earns each active player's "games" Candy. The result says what
     // happened, so nobody has to guess why a game did or did not count.
