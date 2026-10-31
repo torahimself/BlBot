@@ -7,5 +7,9 @@
 // To block someone: paste their Discord user ID below (as a string), commit, and restart the bot.
 // To unblock: delete the line.
 module.exports = [
-  // '123456789012345678',
+  '735516702682382397',
+  '1079072290098126921',
+  '1050379337905492118',
+  '1243907335370440736',
+  '1427233614722109541',
 ];
