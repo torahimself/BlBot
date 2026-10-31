@@ -14,6 +14,7 @@ const views = require('../economy/engine/views');
 const W = 1000;
 const hexOfNum = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0').slice(-6);
 const GOLD = '#f5c518';
+const GAME_COLOR = '#2dd4bf';
 
 /** Everything the card shows, as plain data (also used by the tests). */
 function model(data, prefs) {
@@ -22,9 +23,11 @@ function model(data, prefs) {
     .filter((x) => x.info);
   const titles = owned.map((x) => ({
     id: x.id, name: x.info.name, emoji: x.info.emoji, kind: x.info.kind,
-    rank: x.info.kind === 'event' ? 100 + x.earnedAt / 1e13 : x.info.n,
-    color: x.info.kind === 'event' ? GOLD : hexOfNum(fmt.tierStyle(x.info.n).color),
-    sub: x.info.kind === 'event' ? `${x.info.event.name} · ${x.info.tier.label}` : `${settings.milestones[x.info.track].label} ${fmt.roman(x.info.n)}`,
+    rank: x.info.kind === 'event' ? 100 + x.earnedAt / 1e13 : x.info.kind === 'game' ? 0.5 + x.earnedAt / 1e14 : x.info.n,
+    color: x.info.kind === 'event' ? GOLD : x.info.kind === 'game' ? GAME_COLOR : hexOfNum(fmt.tierStyle(x.info.n || 1).color),
+    sub: x.info.kind === 'event' ? `${x.info.event.name} · ${x.info.tier.label}`
+      : x.info.kind === 'game' ? `Game badge · ${x.info.hint}`
+      : `${(settings.milestones[x.info.track] || {}).label || 'Title'} ${x.info.n ? fmt.roman(x.info.n) : ''}`.trim(),
   })).sort((a, b) => b.rank - a.rank || a.name.localeCompare(b.name));
 
   const featured = titles.find(t => t.id === prefs.featured) || titles[0] || null;
