@@ -1,4 +1,5 @@
 const commandHandler = require('../handlers/commandHandler');
+const blocklist = require('../utils/blocklist.js');
 const shopManager = require('../utils/economy/shopManager.js');
 const { activeTrades, getTrade, cancelTrade } = require('../utils/economy/tradeManager.js');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
@@ -20,6 +21,7 @@ const GAME_MODAL_PREFIXES = ['numberduel_pick_'];
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction) {
+    if (await blocklist.gateInteraction(interaction)) return;
 
     // ---------- SLASH COMMANDS ----------
     if (interaction.isChatInputCommand()) {
