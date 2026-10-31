@@ -45,7 +45,7 @@ function sqlFor(userId, source, units, now) {
 async function rank(category, week) {
   const c = cfg();
   const rows = await dbx.all(
-    `SELECT userId FROM night_totals WHERE week = ? AND source = ? AND units >= ?
+    `SELECT userId FROM night_totals WHERE week = ? AND source = ? AND units >= ?${require('../../blocklist.js').sqlExclude()}
       ORDER BY units DESC, userId ASC LIMIT ?`,
     [week, category, Math.max(1, c[category].minUnits), c.top]
   );
