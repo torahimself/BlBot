@@ -1,12 +1,19 @@
 const { handleLinkEmbed } = require('../utils/linkEmbedder.js');
 const activity = require('../utils/economy/engine/activity.js');
 const partyGames = require('../utils/games/index.js');
+const blocklist = require('../utils/blocklist.js');
 
 module.exports = {
   name: 'messageCreate',
   async execute(message) {
     if (message.author.bot) return;
     if (message.content.startsWith('/')) return;
+
+    // Blocked members get nothing from the bot (see /blocked-users.js). Only a game command earns the one "no access" DM.
+    if (blocklist.isBlocked(message.author.id)) {
+      if (partyGames.parseTrigger(message.content) || partyGames.isStopCommand(message.content) || partyGames.isHelpCommand(message.content)) blocklist.notice(message.client, message.author.id);
+      return;
+    }
 
     // ── Party games: triggers (.علم .مافيا .انسان …) and in-game answers ──
     await partyGames.handleMessage(message);
