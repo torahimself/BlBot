@@ -178,7 +178,7 @@ async function communityAgg(ev) {
        FROM (SELECT MIN(${num(p.voiceMax)}, voiceMinutes / ${num(p.voiceMinutesPerPoint)})
                   + MIN(${num(p.textMax)},  textChars    / ${num(p.textCharsPerPoint)})
                   + MIN(${num(p.gamesMax || 0)}, games * ${num(p.pointsPerGame || 0)}) AS pts
-               FROM event_points WHERE eventId = ?)`,
+               FROM event_points WHERE eventId = ?${require('../../blocklist.js').sqlExclude()})`,
     [ev.id]
   );
   return { participants: row.participants, total: row.total, qualified: row.qualified };
@@ -278,6 +278,7 @@ async function finalizeIfDue(client, now = Date.now(), { rng = settings.rng } = 
       const rows = await dbx.all('SELECT userId, textChars, voiceMinutes, games FROM event_points WHERE eventId = ?', [ev.id]);
       for (const r of rows) {
         if (pointsOf(ev, r).total < ev.points.qualifyAt) continue;
+        if (require('../../blocklist.js').isBlocked(r.userId)) continue;
         await grantTo(ev, r.userId, reached, now, rng);
       }
     }
