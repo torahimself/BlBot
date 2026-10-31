@@ -8,7 +8,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const ASSETS = path.join(__dirname, '..', '..', 'assets');
+// The folder is «assets», but a misspelt «assests» upload also works.
+const ASSETS = ['assets', 'assests']
+  .map(n => path.join(__dirname, '..', '..', n))
+  .find(d => { try { return require('fs').existsSync(path.join(d, 'fonts')); } catch (_) { return false; } })
+  || path.join(__dirname, '..', '..', 'assets');
 const FAMILY = 'BLCairo';
 
 let mod;                    // undefined = not tried, null = unavailable
