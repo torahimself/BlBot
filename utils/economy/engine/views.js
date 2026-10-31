@@ -29,6 +29,10 @@ function titleInfo(titleId) {
     const tier = settings.milestones[m[1]].tiers[Number(m[2]) - 1];
     return tier ? { kind: 'milestone', track: m[1], n: Number(m[2]), name: tier.name, emoji: tier.emoji } : null;
   }
+  if (/^gb_/.test(titleId || '')) {
+    const b = require('../../games/badges.js').info(titleId);
+    return b ? { kind: 'game', name: b.name, emoji: b.emoji, hint: b.hint } : null;
+  }
   const t = settings.eventTitles[titleId];
   if (t) {
     return {
@@ -99,6 +103,8 @@ function profileEmbed({ name, avatarUrl, data }) {
     .sort((a, b) => a.t.earnedAt - b.t.earnedAt || a.t.titleId.localeCompare(b.t.titleId));
   for (const x of eventTitles) featured.push(`${x.info.emoji} **${x.info.name}**`);
 
+  const gameBadges = data.titles.map((t) => titleInfo(t.titleId)).filter((i) => i && i.kind === 'game');
+
   const embed = new EmbedBuilder()
     .setColor(fmt.tierStyle(Math.min(MAX_TIER, Math.max(topVoice, topText, 1))).color || BLURPLE)
     .setAuthor({ name: `${name}'s profile`, iconURL: avatarUrl || undefined })
@@ -114,6 +120,9 @@ function profileEmbed({ name, avatarUrl, data }) {
       value: eventTitles.map((x) => `${x.info.emoji} **${x.info.name}** — ${x.info.event.name} · ${x.info.tier.emoji} ${x.info.tier.label}`).join('\n').slice(0, 1024),
       inline: false,
     });
+  }
+  if (gameBadges.length) {
+    embed.addFields({ name: '🎮 Game badges', value: gameBadges.map((i) => `${i.emoji} **${i.name}**`).join('  ·  ').slice(0, 1024), inline: false });
   }
   embed.setFooter({ text: `Counted so far: ${fmt.num(data.chars)} characters · ${fmt.minutesText(data.voiceMinutes)} in voice` });
   if (avatarUrl) embed.setThumbnail(avatarUrl);
