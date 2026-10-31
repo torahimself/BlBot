@@ -221,4 +221,13 @@ const REASONS_AR = {
   vote: 'لم يوافق اللاعبون على هذه الكلمة',
 };
 
-module.exports = { validate, keyOf, formsOf, isNonAnswer, CATS, REASONS_AR, inLexicon, SETS, isRealAnswer, nearMiss };
+/** One typed word is a real Arabic word (the word chain uses this): in a category list or the dictionary. */
+function isRealWord(text) {
+  const key = keyOf(text);
+  if (!key || key.includes(' ') || [...key].length < 2) return false;
+  if (ANY.has(key)) return true;
+  if (/^ا{2,}/.test(key)) return false;                     // the dictionary has a few junk entries like «ااب»
+  return isRealAnswer(key) === true;
+}
+
+module.exports = { isRealWord, validate, keyOf, formsOf, isNonAnswer, CATS, REASONS_AR, inLexicon, SETS, isRealAnswer, nearMiss };
