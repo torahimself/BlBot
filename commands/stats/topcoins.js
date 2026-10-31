@@ -9,7 +9,7 @@ module.exports = {
   async execute(interaction) {
     const rows = await new Promise((resolve, reject) => {
       db.all(
-        'SELECT userId, balance FROM users ORDER BY balance DESC LIMIT 10',
+        `SELECT userId, balance FROM users WHERE 1=1${require('../../utils/blocklist.js').sqlExclude()} ORDER BY balance DESC LIMIT 10`,
         [],
         (err, rows) => { if (err) reject(err); else resolve(rows); }
       );
