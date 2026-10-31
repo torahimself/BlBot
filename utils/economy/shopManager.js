@@ -95,13 +95,15 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
     return { success: false, message: 'Failed to create role. Coins refunded.' };
   }
 
+  // New purchased roles go directly BENEATH the "Casino roles" separator role (older roles are never moved).
+  // Higher position = higher in the list, so "beneath" is position − 1. The role is created at the bottom, so
+  // moving it up to separator − 1 only shifts the roles in between and never touches the separator.
   const targetRoleId = '1446128863200542933';
-  const targetRole = guild.roles.cache.get(targetRoleId);
-  if (targetRole) {
-    try { await role.setPosition(targetRole.position + 1); } catch (err) { console.warn('Could not set role position:', err.message); }
-  } else {
-    try { await role.setPosition(2); } catch (err) { console.warn('Could not set role position:', err.message); }
-  }
+  try {
+    const targetRole = guild.roles.cache.get(targetRoleId) || await guild.roles.fetch(targetRoleId);
+    if (targetRole) await role.setPosition(Math.max(1, targetRole.position - 1), { reason: 'Custom role: placed under the casino separator' });
+    else console.warn('Casino separator role not found — the new role stays at the bottom.');
+  } catch (err) { console.warn('Could not set role position (is the bot role above the separator?):', err.message); }
 
   const now = Date.now();
   const expiration = now + ROLE_DURATION_MS;
