@@ -4,7 +4,7 @@
 //   messageCreate  → handleMessage(message)      (never throws)
 //   interactionCreate (customId "pg:…") → handleInteraction(interaction)
 //
-// Trigger: <sign><word> [bet]   —   .علم   .عاصمة   .مافيا   .انسان   .علم 500
+// Trigger: <sign><word> [bet]   —   .علم   .عاصمة   .مافيا   .ريبليكا   .علم 500
 
 const cfg = require('./config.js');
 const { foldLetters } = require('./arabic.js');
@@ -72,7 +72,7 @@ function helpEmbed() {
       line('🌍', 'أعلام', 'علم', cfg.guess, 'خمّن الدولة من علمها، الأسرع يفوز.'),
       line('🏛️', 'عواصم', 'عاصمة', cfg.guess, 'خمّن الدولة من عاصمتها.'),
       line('📍', 'جيو', 'جيو', cfg.geo, 'صورة من مكان حقيقي — اكتب اسم الدولة، والأقرب يأخذ نقاط أكثر.'),
-      line('🔤', 'إنسان حيوان', 'انسان', cfg.categories, 'حرف وخمس فئات، اكتب كلمة صحيحة بالحرف في 15 ثانية.'),
+      line('🔤', 'ريبليكا', 'ريبليكا', cfg.categories, 'إنسان حيوان نبات جماد بلاد: حرف وخمس فئات، اكتب كلمة صحيحة بالحرف في 15 ثانية.'),
       line('⚡', 'أسرع كتابة', 'كتابة', cfg.typing, 'اكتب الجملة قبل الجميع.'),
       line('🧮', 'حساب سريع', 'حساب', cfg.math, 'مسائل حساب تصعب، أول إجابة صحيحة تفوز.'),
       line('🔗', 'سلسلة كلمات', 'سلسلة', cfg.chain, 'كلمة تبدأ بآخر حرف من التي قبلها، ومن يتأخر يخرج.'),
