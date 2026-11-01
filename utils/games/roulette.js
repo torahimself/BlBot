@@ -23,14 +23,8 @@ const COLOR_INFO = [
 
 const rngOf = (s) => (s.options && s.options.rng) || Math.random;
 const alive = (s) => s.ids.filter(id => s.data.alive.has(id));
-const tag = (s, id) => `**${s.data.num.get(id)}** ${COLOR_INFO[s.data.color.get(id)][0]} ${s.mention(id)}`;
-
-function listLines(s, ids) {
-  return ids.map(id => {
-    const [emoji, name] = COLOR_INFO[s.data.color.get(id)];
-    return `**${s.data.num.get(id)}** – ${emoji} ${name} – ${s.mention(id)}`;
-  }).join('\n');
-}
+// Colours only exist on the wheel picture itself; no message ever names a player's colour.
+const tag = (s, id) => s.mention(id);
 
 // Every component carries the turn number (":<n>") so a button from an earlier turn can never act on the current one.
 function buttons(s, n, disabled = false) {
@@ -43,9 +37,8 @@ function buttons(s, n, disabled = false) {
 
 function pickMenu(s, chosen, n) {
   const opts = alive(s).filter(id => id !== chosen).slice(0, 25).map(id => ({
-    label: `${s.data.num.get(id)} – ${COLOR_INFO[s.data.color.get(id)][1]} – ${s.name(id)}`.slice(0, 100),
+    label: `${s.data.num.get(id)} – ${s.name(id)}`.slice(0, 100),
     value: id,
-    emoji: COLOR_INFO[s.data.color.get(id)][0],
   }));
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder().setCustomId(`pg:${s.id}:rsel:${n}`).setPlaceholder('اختر من تريد طرده...').addOptions(opts)
@@ -89,12 +82,7 @@ async function start(s) {
   s.data.turn = null;
   s.ids.forEach((id, i) => { s.data.num.set(id, i + 1); s.data.color.set(id, i % 12); s.markActive(id); });
 
-  await s.channel.send({
-    content: `🎡 **روليت الطرد** — ${s.players.size} لاعبين. كل جولة تدور العجلة وتختار لاعبًا، وهو يقرر: **طرد لاعب** أو **طرد عشوائي** أو **انسحاب**. آخر لاعب يبقى يفوز!\n${listLines(s, s.ids)}`,
-    allowedMentions: { parse: [] },
-  });
-  await sleep(r.pauseMs);
-
+  // No introduction and no list of colours: the first wheel spins right away.
   let round = 0;
   while (s.status === 'running') {
     await dropGone(s);
@@ -110,26 +98,35 @@ async function start(s) {
     const file = () => new AttachmentBuilder(g.buffer, { name: 'wheel.gif' });
 
     // ── Two players left: no kicking — whoever the wheel picks wins. ──────
+    // The wheel spins WITHOUT naming anybody; the winner is mentioned only after it has stopped.
     if (left.length === 2) {
       const finalEmbed = new EmbedBuilder().setColor(0xF1C40F)
         .setTitle(`🎡 الجولة الأخيرة — العجلة تدور...`)
-        .setDescription(`${listLines(s, left)}\n\nلم يتبقَّ سوى لاعبين، فمن تختاره العجلة **يفوز تلقائيًا**!`)
+        .setDescription('لم يتبقَّ سوى لاعبين، فمن تختاره العجلة **يفوز تلقائيًا**!')
         .setImage('attachment://wheel.gif');
-      await s.channel.send({ content: `${s.mention(chosen)}`, embeds: [finalEmbed], files: [file()], allowedMentions: { users: [chosen] } });
+      await s.channel.send({ embeds: [finalEmbed], files: [file()], allowedMentions: { parse: [] } });
       await sleep(g.spinMs + r.revealPadMs);
       if (s.status !== 'running') return;
       const other = left.find(id => id !== chosen);
       s.data.alive.delete(other);
       await s.channel.send({
-        content: `🎯 وقع الاختيار على ${tag(s, chosen)} — وبما أنه لم يتبقَّ سوى لاعبين فهو **يفوز تلقائيًا**!\n💀 **خرج من اللعبة:** ${s.mention(other)}`,
-        allowedMentions: { parse: [] },
+        content: `🎯 وقع الاختيار على ${s.mention(chosen)} — وبما أنه لم يتبقَّ سوى لاعبين فهو **يفوز تلقائيًا**!\n💀 **خرج من اللعبة:** ${s.mention(other)}`,
+        allowedMentions: { users: [chosen] },
       });
       break;
     }
 
-    // ── Normal turn: ONE message = mention + wheel + the three buttons. ───
-    // Nothing has to be edited afterwards for the buttons to exist. The 15 s
-    // start once the message is delivered AND the wheel has stopped spinning.
+    // ── Normal turn ───────────────────────────────────────────────────────
+    // 1) the wheel spins with NO mention (a mention now would spoil who was picked);
+    // 2) once it has stopped, a second message mentions the chosen player and carries the three buttons.
+    const spinEmbed = new EmbedBuilder().setColor(0xE74C3C)
+      .setTitle(`🎡 الجولة ${round} — ${left.length} لاعبين متبقين`)
+      .setDescription('العجلة تدور...')
+      .setImage('attachment://wheel.gif');
+    await s.channel.send({ embeds: [spinEmbed], files: [file()], allowedMentions: { parse: [] } });
+    await sleep(g.spinMs + r.revealPadMs);
+    if (s.status !== 'running') return;
+
     const turn = { n: round, chosen, resolved: false, decision: null, done: null, timer: null };
     const decided = new Promise(res => { turn.done = res; });
     turn.resolve = (decision) => {                               // the ONLY way a turn is resolved
@@ -140,31 +137,19 @@ async function start(s) {
       return true;
     };
     s.data.turn = turn;                                          // set BEFORE sending: clicks are valid from the first moment
-    const shownDeadline = Date.now() + g.spinMs + r.pickMs;
-    const turnEmbed = new EmbedBuilder().setColor(0xE74C3C)
-      .setTitle(`🎡 الجولة ${round} — ${left.length} لاعبين متبقين`)
-      .setDescription(`🎯 ${s.mention(chosen)} — **الدور عليك!** اختر ماذا تفعل.\n⏳ لديك حتى <t:${Math.floor(shownDeadline / 1000)}:R> (بعد توقف العجلة) وإلا ستُطرد أنت من اللعبة!\n\n${listLines(s, left)}`)
-      .setImage('attachment://wheel.gif');
+    const deadline = Date.now() + r.pickMs;
     const msg = await s.channel.send({
-      content: `${s.mention(chosen)}`,
-      embeds: [turnEmbed],
-      files: [file()],
+      content: `🎯 ${s.mention(chosen)} — **الدور عليك!** اختر ماذا تفعل.\n⏳ لديك حتى <t:${Math.floor(deadline / 1000)}:R> وإلا ستُطرد أنت من اللعبة!`,
       components: [buttons(s, turn.n)],
       allowedMentions: { users: [chosen] },
     });
-    const sentAt = Date.now();
     if (!turn.resolved) {
-      turn.timer = setTimeout(() => turn.resolve({ kind: 'timeout' }), g.spinMs + r.pickMs);
+      turn.timer = setTimeout(() => turn.resolve({ kind: 'timeout' }), r.pickMs);
       s.timers.add(turn.timer);
     }
 
     await decided;
     s.data.turn = null;
-    if (s.status !== 'running') return;
-
-    // Let the wheel finish before the result is announced (a very fast click).
-    const spinLeft = sentAt + g.spinMs - Date.now();
-    if (spinLeft > 0) await sleep(spinLeft);
     if (s.status !== 'running') return;
 
     // Resolve the decision. The chosen player can never be the victim of a kick.
@@ -176,7 +161,7 @@ async function start(s) {
       text = `🎯 ${s.mention(chosen)} اختار طرد ${tag(s, victim)}!`;
     } else if (d.kind === 'random' && others.length) {
       victim = pickRandom(s, others);
-      text = `🎲 ${s.mention(chosen)} اختار الطرد العشوائي… وخرج ${tag(s, victim)}!`;
+      text = `🎲 ${s.mention(chosen)} اختار الطرد العشوائي… وخرج ${s.mention(victim)}!`;
     } else if (d.kind === 'leave') {
       victim = chosen;
       text = `🚪 ${s.mention(chosen)} انسحب من اللعبة!`;
