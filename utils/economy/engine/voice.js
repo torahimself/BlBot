@@ -16,6 +16,7 @@
 
 const settings = require('./settings');
 const activity = require('./activity');
+const streaks = require('./streaks');
 
 /**
  * Pure function (also used by the tests).
@@ -96,7 +97,9 @@ class VoiceTicker {
       const minutes = elapsed > 5 * 60 * 1000 ? 1 : Math.max(1, Math.round(elapsed / 60000));
       this.last = now;
 
-      const groups = eligibleByChannel(await this.collect());
+      const states = await this.collect();
+      for (const st of states) if (!st.bot) streaks.touch(st.userId, now);     // sitting in voice keeps the daily streak
+      const groups = eligibleByChannel(states);
       let credited = 0;
       for (const ids of groups.values()) {
         for (const id of ids) {
