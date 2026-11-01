@@ -51,13 +51,13 @@ const DATA = { balance: 1234567, chars: 183450, voiceMinutes: 5230, titles: [
   });
   await t('defaults for a new member; unknown values in the database fall back safely', async () => {
     const p = await prefs.get('NEW');
-    assert.deepStrictEqual(p, { theme: 'midnight', accent: null, shape: 'circle', layout: 'full', featured: null, about: '' });
+    assert.deepStrictEqual(p, { theme: 'midnight', accent: null, shape: 'circle', layout: 'full', featured: null, about: '', bg: null, chips: [] });
     await dbx.run("INSERT INTO ui_prefs (userId, theme, accent, shape, layout, featured, about) VALUES ('BAD', 'nope', 'zzz', 'blob', 'huge', NULL, NULL)");
     assert.deepStrictEqual(await prefs.get('BAD'), p);
   });
   await t('choices are saved, validated, and survive reading again; reset restores the defaults', async () => {
     let p = await prefs.set('U1', { theme: 'pumpkin', accent: '#FF8A1F', shape: 'hex', layout: 'compact', featured: 'ms_voice_2', about: 'مرحبا  بكم' });
-    assert.deepStrictEqual(p, { theme: 'pumpkin', accent: '#ff8a1f', shape: 'hex', layout: 'compact', featured: 'ms_voice_2', about: 'مرحبا بكم' });
+    assert.deepStrictEqual(p, { theme: 'pumpkin', accent: '#ff8a1f', shape: 'hex', layout: 'compact', featured: 'ms_voice_2', about: 'مرحبا بكم', bg: null, chips: [] });
     assert.deepStrictEqual(await prefs.get('U1'), p);
     p = await prefs.set('U1', { theme: 'not-a-theme', shape: 'x', accent: 'purple' });
     assert.strictEqual(p.theme, 'pumpkin'); assert.strictEqual(p.shape, 'hex'); assert.strictEqual(p.accent, '#ff8a1f', 'invalid values change nothing');
@@ -96,7 +96,7 @@ const DATA = { balance: 1234567, chars: 183450, voiceMinutes: 5230, titles: [
     const full = dims(await profileCard.render({ name: 'A', avatar: null, data: many, prefs: themes.DEFAULTS }));
     const comp = dims(await profileCard.render({ name: 'A', avatar: null, data: many, prefs: { ...themes.DEFAULTS, layout: 'compact' } }));
     const none = dims(await profileCard.render({ name: 'A', avatar: null, data: { ...DATA, titles: [] }, prefs: themes.DEFAULTS }));
-    assert.strictEqual(full.w, 1000); assert(comp.h < full.h, 'compact is shorter'); assert(full.h < 1000, 'bounded height: ' + full.h); assert(none.h <= full.h);
+    assert.strictEqual(full.w, 1100); assert(comp.h < full.h, 'compact is shorter'); assert(full.h <= 700, 'bounded height: ' + full.h); assert.strictEqual(none.h, full.h, 'fixed height');
   });
   await t('emoji typed in a name are left out (the font has none) instead of drawing empty boxes', () => {
     assert.strictEqual(R.plain('😀 Tora 🎃'), 'Tora'); assert.strictEqual(R.plain('مرحبا ☕'), 'مرحبا'); assert.strictEqual(R.plain('a  b'), 'a b');
@@ -172,10 +172,10 @@ const DATA = { balance: 1234567, chars: 183450, voiceMinutes: 5230, titles: [
     assert.strictEqual(await customize.handle(it), true);
     assert.strictEqual(it.calls[0][0], 'deferReply'); assert.strictEqual(it.calls[0][1].flags, 64, 'private');
     const out = last(it, 'editReply')[1];
-    assert(out.files[0].name === 'preview.png'); assert.strictEqual(out.components.length, 4);
+    assert(out.files[0].name === 'preview.png'); assert.strictEqual(out.components.length, 5);
     const ids = out.components.flatMap(r => r.components.map(c => c.data.custom_id));
-    for (const k of ['ui:th:C1', 'ui:ac:C1', 'ui:ft:C1', 'ui:b:about:C1', 'ui:b:color:C1', 'ui:b:shape:C1', 'ui:b:layout:C1', 'ui:b:reset:C1']) assert(ids.includes(k), k);
-    assert(out.components[0].components[0].options.length === themes.THEMES.length);
+    for (const k of ['ui:th:C1', 'ui:ac:C1', 'ui:ch:C1', 'ui:b:about:C1', 'ui:b:color:C1', 'ui:b:shape:C1', 'ui:b:layout:C1', 'ui:b:reset:C1']) assert(ids.includes(k), k);
+    assert(out.components[1].components[0].options.length === themes.THEMES.length); assert(ids.includes('ui:bg:C1'));
   });
   await t('only the owner can use a panel: anyone else gets a private refusal and nothing changes', async () => {
     await prefs.set('OWN', { theme: 'ocean' });
@@ -191,8 +191,8 @@ const DATA = { balance: 1234567, chars: 183450, voiceMinutes: 5230, titles: [
     assert.strictEqual((await prefs.get('C2')).theme, 'pumpkin'); assert(last(it, 'editReply')[1].files[0].name === 'preview.png');
     it = mkInteraction('C2', 'ui:ac:C2', { values: ['pink'] }); await customize.handle(it); assert.strictEqual((await prefs.get('C2')).accent, '#ff5c93');
     it = mkInteraction('C2', 'ui:ac:C2', { values: ['theme'] }); await customize.handle(it); assert.strictEqual((await prefs.get('C2')).accent, null);
-    it = mkInteraction('C2', 'ui:ft:C2', { values: ['ms_voice_1'] }); await customize.handle(it); assert.strictEqual((await prefs.get('C2')).featured, 'ms_voice_1');
-    it = mkInteraction('C2', 'ui:ft:C2', { values: ['auto'] }); await customize.handle(it); assert.strictEqual((await prefs.get('C2')).featured, null);
+    it = mkInteraction('C2', 'ui:ch:C2', { values: ['ms_voice_1', 'ms_text_1'] }); await customize.handle(it); assert.deepStrictEqual((await prefs.get('C2')).chips, ['ms_voice_1', 'ms_text_1']);
+    it = mkInteraction('C2', 'ui:ch:C2', { values: [] }); await customize.handle(it); assert.deepStrictEqual((await prefs.get('C2')).chips, [], 'nothing picked = automatic');
   });
   await t('avatar shape and layout buttons cycle through every option; reset restores the defaults', async () => {
     const seen = new Set();
