@@ -158,7 +158,7 @@ async function newGame(host, others, bet, rngValues) {
   await t('pure: rejects bad input (also through the async API)', async () => {
     assert.throws(() => wheel.renderPure({ slots: slotsOf(1), selected: 0 }));
     await assert.rejects(() => wheel.render({ slots: slotsOf(1), selected: 0 }));
-    await assert.rejects(() => wheel.render({ slots: slotsOf(13), selected: 0 }));
+    await assert.rejects(() => wheel.render({ slots: slotsOf(21), selected: 0 }));
     await assert.rejects(() => wheel.render({ slots: slotsOf(4), selected: 4 }));
   });
 
@@ -470,21 +470,27 @@ async function newGame(host, others, bet, rngValues) {
     await s.abort('done'); await run;
   });
 
-  await t('the FIRST message of a turn already has the mention, the GIF, the legend and all three buttons', async () => {
+  await t('the wheel spins WITHOUT any mention, colour list or buttons; the chosen player is mentioned only afterwards, with the buttons', async () => {
     const { s, ch } = await newGame('ra', ['rb', 'rc'], 0, [0, 0, 0]);
     const run = s.start();
     await waitTurn(s);
     const m = ch.sent.find(x => x.files && x.files[0] && x.files[0].name === 'wheel.gif');
     assert(m, 'wheel message with attachment');
-    assert.strictEqual(m.content, '<@ra>', 'the chosen player is mentioned in that same message');
-    assert.deepStrictEqual(m.allowedMentions, { users: ['ra'] }, 'and only he is pinged');
+    assert(!m.content, 'no mention in the spinning message');
+    assert.deepStrictEqual(m.allowedMentions, { parse: [] }, 'nobody is pinged by the wheel');
     const desc = m.embeds[0].data ? m.embeds[0].data.description : m.embeds[0].description;
-    assert(/\*\*1\*\* – 🔴 أحمر – <@ra>/.test(desc) && /\*\*2\*\* – 🔵 أزرق – <@rb>/.test(desc) && /\*\*3\*\* – 🟢 أخضر – <@rc>/.test(desc), desc);
-    assert(/<t:\d+:R>/.test(desc), 'live Discord timestamp');
-    assert.strictEqual(m.components.length, 1, 'components are in the original send (no edit needed)');
-    const row = m.components[0].components.map(c => c.data.label);
+    assert(!/<@/.test(desc) && !/🔴|🔵|🟢|أحمر|أزرق|أخضر/.test(desc), 'no user and no colour in the embed: ' + desc);
+    assert(!m.components || !m.components.length, 'no buttons on the spinning message');
+    assert(!ch.sent.some(x => /🔴|🔵|🟢|أحمر|أزرق|أخضر/.test(x.content || '')), 'colours are never mentioned');
+    const turnMsg = ch.sent.find(x => x.components && x.components.length);
+    assert(turnMsg && turnMsg !== m, 'the buttons live in a second message');
+    assert.strictEqual(ch.sent.indexOf(turnMsg) > ch.sent.indexOf(m), true, 'sent after the wheel');
+    assert(/^🎯 <@ra> — \*\*الدور عليك!\*\*/.test(turnMsg.content), 'the chosen player is mentioned here: ' + turnMsg.content);
+    assert.deepStrictEqual(turnMsg.allowedMentions, { users: ['ra'] }, 'and only he is pinged');
+    assert(/<t:\d+:R>/.test(turnMsg.content), 'live Discord timestamp');
+    const row = turnMsg.components[0].components.map(c => c.data.label);
     assert.deepStrictEqual(row, ['طرد لاعب', 'طرد عشوائي', 'انسحاب']);
-    assert(m.components[0].components.every(c => !c.data.disabled), 'buttons are enabled');
+    assert(turnMsg.components[0].components.every(c => !c.data.disabled), 'buttons are enabled');
     await s.abort('test over'); await run;
   });
 
@@ -492,7 +498,7 @@ async function newGame(host, others, bet, rngValues) {
     const { s, ch } = await newGame('ra', ['rb', 'rc', 'rd'], 0, [0, 0, 0, 0]);
     const run = s.start();
     await waitTurn(s);
-    const m = ch.sent.find(x => x.files && x.files[0]);
+    const m = ch.sent.find(x => x.components && x.components.length);
     await click('ra', s, 'rleave');
     await waitFor(() => m.components[0].components.every(c => c.data.disabled));
     await s.abort('done'); await run;
@@ -541,7 +547,31 @@ async function newGame(host, others, bet, rngValues) {
     for (const id of ['ra', 'rb', 'rc']) assert.strictEqual(await bal(id), 1000, id + ' not refunded twice');
   });
 
-  await t('lobby: fewer than 3 players cannot start; max is 12', async () => {
+  await t('20 players: the kick menu fits (19 targets) and the game plays through to one winner', async () => {
+    const others = Array.from({ length: 19 }, (_, i) => 'p' + (i + 2));
+    const { s, ch } = await newGame('p1', others, 0, []);
+    assert.strictEqual(s.players.size, 20);
+    const run = s.start();
+    let rounds = 0;
+    while (s.status === 'running' && rounds < 25) {
+      const turn = await waitFor(() => s.data.turn && !s.data.turn.resolved && s.data.turn, 4000).catch(() => null);
+      if (!turn) break;
+      rounds++;
+      if (rounds === 1) {
+        const it = await click(turn.chosen, s, 'rkick');
+        const menu = it.replies[0].components[0].components[0];
+        assert.strictEqual(menu.options.length, 19, 'every other player is selectable');
+        assert(menu.options.every(o => !/🔴|🔵|🟢|أحمر|أزرق/.test(o.data ? o.data.label : o.label)), 'no colour names in the menu');
+      }
+      await click(turn.chosen, s, 'rleave');
+      await sleep(20);
+    }
+    await run;
+    assert.strictEqual(session.sessions.size, 0, 'game finished');
+    assert(ch.sent.some(m => /الفائز في روليت الطرد/.test(m.content || '')), 'a winner was announced');
+  });
+
+  await t('lobby: fewer than 3 players cannot start; max is 20', async () => {
     const ch = mkChannel();
     const adapter = { channel: ch, user: { id: 'ra' }, member: { displayName: 'ra' }, editReply: (p) => ch.send(p) };
     const r = await session.create({ type: roulette.type, def: roulette, interaction: adapter, bet: 0 });
@@ -549,7 +579,7 @@ async function newGame(host, others, bet, rngValues) {
     await s.addPlayer('rb', 'rb');
     const startClick = await click('ra', s, 'start');
     assert(/3/.test(startClick.replies[0].content), 'needs 3 players');
-    assert.strictEqual(roulette.min, 3); assert.strictEqual(roulette.max, 12);
+    assert.strictEqual(roulette.min, 3); assert.strictEqual(roulette.max, 20);
     await s.abort('done');
   });
 
