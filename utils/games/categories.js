@@ -68,7 +68,7 @@ function boardEmbed(s) {
     }
   }
   const scores = eligibleSorted(s).map((r, i) => `${['🥇', '🥈', '🥉'][i] || '▫️'} <@${r.id}> — **${r.pts}**${d.left.has(r.id) ? ' 🚪' : ''}`).join('\n') || '—';
-  return new EmbedBuilder().setColor(0xEB459E).setTitle('🔤 لوحة اللعبة — إنسان حيوان نبات جماد بلاد')
+  return new EmbedBuilder().setColor(0xEB459E).setTitle('🔤 ريبليكا — لوحة اللعبة')
     .setDescription(lines.join('\n').slice(0, 4000))
     .addFields({ name: '🏆 النقاط', value: scores.slice(0, 1000) })
     .setFooter({ text: `الجولة ${Math.min(d.letterIdx + 1, d.letters.length)}/${d.letters.length}` });
@@ -291,7 +291,7 @@ async function start(s) {
   let stopNote = '';
 
   await s.channel.send({
-    embeds: [new EmbedBuilder().setColor(0xEB459E).setTitle('🔤 إنسان حيوان نبات جماد بلاد')
+    embeds: [new EmbedBuilder().setColor(0xEB459E).setTitle('🔤 ريبليكا')
       .setDescription(`**${rounds}** جولات، حرف لكل جولة، و**5** فئات لكل حرف.\n• يُختار لاعب عشوائي لكل فئة ولديه **${Math.round(c.turnMs / 1000)} ثانية** ليكتب إجابته في الشات.\n• الإجابة الصحيحة = **${c.pointsCorrect}** نقاط. إن انتهى وقته ينتقل الدور للاعب آخر لنفس الفئة (لكل لاعب محاولة واحدة في الفئة).\n• الإجابات بالعربية فقط وتبدأ بالحرف المطلوب.`)],
     allowedMentions: { parse: [] },
   });
@@ -349,7 +349,7 @@ async function start(s) {
 }
 
 module.exports = {
-  type: 'categories', title: 'إنسان حيوان نبات جماد بلاد', emoji: '🔤', min: c.min, max: c.max,
-  blurb: 'خمسة حروف، وخمس فئات لكل حرف. يُختار لاعب عشوائي لكل فئة وعنده 15 ثانية ليكتب إجابته — الصحيحة بـ10 نقاط!',
+  type: 'categories', title: 'ريبليكا', emoji: '🔤', min: c.min, max: c.max,
+  blurb: 'إنسان حيوان نبات جماد بلاد: خمسة حروف، وخمس فئات لكل حرف. يُختار لاعب عشوائي لكل فئة وعنده 15 ثانية ليكتب إجابته — الصحيحة بـ10 نقاط!',
   start, onMessage, onComponent, cleanup, leave, validAnswer, boardEmbed, CATS, LETTERS,
 };
