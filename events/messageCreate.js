@@ -15,6 +15,8 @@ module.exports = {
       return;
     }
 
+    if (message.guild) require('../utils/economy/engine/streaks.js').touch(message.author.id).catch(() => {});   // any message keeps the daily streak
+
     // ── Party games: triggers (.علم .مافيا .انسان …) and in-game answers ──
     await partyGames.handleMessage(message);
 
