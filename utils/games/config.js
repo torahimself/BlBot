@@ -15,7 +15,7 @@ module.exports = {
       guess:      ['علم', 'اعلام', 'خمن', 'دولة'],
       capital:    ['عاصمة', 'عواصم'],
       mafia:      ['مافيا', 'مافية'],
-      categories: ['انسان', 'انسان_حيوان', 'حروف'],
+      categories: ['ريبليكا', 'انسان', 'انسان_حيوان', 'حروف'],
       roulette:   ['روليت', 'روليت_الطرد', 'عجلة'],
       geo:        ['جيو', 'شارع', 'صورة'],
       typing:     ['كتابة', 'اسرع', 'سرعة'],
@@ -45,7 +45,7 @@ module.exports = {
   },
 
   guess:      { min: 1, max: 10, roundMs: 20 * 1000, hintAfterMs: 10 * 1000, rounds: 8 },
-  roulette:   { min: 3, max: 12, pickMs: 15 * 1000, pauseMs: 2500, revealPadMs: 700 },
+  roulette:   { min: 3, max: 20, pickMs: 15 * 1000, pauseMs: 2500, revealPadMs: 700 },
   // Street-photo game (.جيو): a photo is shown, players TYPE the COUNTRY (Arabic or English). The first valid
   // guess is final, a country can be taken once per round, the right country scores 40, others by distance.
   // Photos: Mapillary street-level photos when a free MAPILLARY_TOKEN is set, then Wikimedia Commons
@@ -70,9 +70,9 @@ module.exports = {
   typing: { min: 1, max: 10, rounds: 6, roundMs: 25 * 1000, introMs: 2500, pauseMs: 2000, minMsPerChar: 70 },
   math:   { min: 1, max: 10, rounds: 8, roundMs: 15 * 1000, introMs: 2500, pauseMs: 1800 },
   chain:  { min: 1, max: 8, turnMs: 20 * 1000, minTurnMs: 9 * 1000, speedUpMs: 500, maxWords: 60, soloWinAt: 5, introMs: 3000 },
-  mafia:      { min: 5, max: 12, nightMs: 35 * 1000, talkMs: 45 * 1000, voteMs: 30 * 1000 },
+  mafia:      { min: 5, max: 20, nightMs: 35 * 1000, talkMs: 45 * 1000, voteMs: 30 * 1000 },
   categories: {
-    min: 1, max: 8,
+    min: 1, max: 20,
     rounds: 5,                    // letters per game (one letter per round, all 5 categories each)
     turnMs: 15 * 1000,            // time a picked player has to type an answer
     pointsCorrect: 10,
