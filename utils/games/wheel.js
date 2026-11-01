@@ -254,7 +254,7 @@ function encodeGif(frames, delaysCs, opts = {}) {
 const cache = new Map();
 
 function renderPure({ slots, selected, avatars }) {
-  if (!Array.isArray(slots) || slots.length < 2 || slots.length > 12) throw new Error('wheel: need 2–12 slots');
+  if (!Array.isArray(slots) || slots.length < 2 || slots.length > 20) throw new Error('wheel: need 2–20 slots');
   if (!(selected >= 0 && selected < slots.length)) throw new Error('wheel: bad selected index');
   const hasAv = Array.isArray(avatars) && avatars.some(Boolean);
   const key = slots.map((s, i) => `${s.num}.${s.colorIdx}.${hasAv && avatars[i] ? avatars[i].id : '-'}`).join(',') + '|' + selected;
@@ -575,7 +575,7 @@ async function loadPureAvatar(url, fetchImpl = globalThis.fetch) {
 /** Async: canvas wheel when available, otherwise the pure-JS one. Never throws because of a missing module. */
 async function render(args, opts = {}) {
   const { slots, selected } = args || {};
-  if (!Array.isArray(slots) || slots.length < 2 || slots.length > 12) throw new Error('wheel: need 2–12 slots');
+  if (!Array.isArray(slots) || slots.length < 2 || slots.length > 20) throw new Error('wheel: need 2–20 slots');
   if (!(selected >= 0 && selected < slots.length)) throw new Error('wheel: bad selected index');
   const mod = loadCanvas();
   if (mod) {
