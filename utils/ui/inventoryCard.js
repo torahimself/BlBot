@@ -4,6 +4,7 @@
 
 const R = require('./render');
 const themes = require('./themes');
+const backgrounds = require('./backgrounds');
 const fmt = require('../economy/engine/format');
 const settings = require('../economy/engine/settings');
 const boosts = require('../economy/engine/boosts');
@@ -41,9 +42,10 @@ async function render({ name, avatar, state, prefs }) {
   const m = model(state);
   const theme = themes.themeOf(prefs.theme);
   const accent = themes.accentOf(prefs);
-  const P = themes.palette(theme, accent);
+  const art = prefs.bg && backgrounds.byId(prefs.bg);
+  const P = themes.palette(art ? { ...theme, dark: true } : theme, accent);
   const { c, g } = R.newCanvas(W, H);
-  R.background(g, W, H, theme, accent);
+  if (!(art && await backgrounds.paint(g, W, H, prefs.bg, accent))) R.background(g, W, H, theme, accent);
   const PAD = 26;
   R.fillRR(g, PAD, PAD, W - PAD * 2, H - PAD * 2, 34, P.panel, P.faint, 2);
   const L = PAD + 34, Rr = W - PAD - 34;
