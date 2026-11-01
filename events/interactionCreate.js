@@ -22,6 +22,7 @@ module.exports = {
   name: 'interactionCreate',
   async execute(interaction) {
     if (await blocklist.gateInteraction(interaction)) return;
+    if (interaction.isChatInputCommand()) require('../utils/economy/engine/streaks.js').touch(interaction.user.id).catch(() => {});   // any command keeps the daily streak
 
     // ---------- SLASH COMMANDS ----------
     if (interaction.isChatInputCommand()) {
