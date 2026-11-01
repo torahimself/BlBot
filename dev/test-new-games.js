@@ -43,7 +43,7 @@ const text = (ch) => ch.sent.map(m => (m.content || '') + JSON.stringify(m.embed
     for (const [w, ty] of [['كتابة', 'typing'], ['حساب', 'math'], ['سلسلة', 'chain']]) assert.strictEqual(games.parseTrigger('.' + w).type, ty);
     assert(games.isHelpCommand('.العاب')); assert(!games.isHelpCommand('.علم'));
     const d = games.helpEmbed().data.description;
-    for (const w of ['علم', 'عاصمة', 'جيو', 'انسان', 'كتابة', 'حساب', 'سلسلة', 'روليت', 'مافيا']) assert(d.includes('.' + w), w);
+    for (const w of ['علم', 'عاصمة', 'جيو', 'ريبليكا', 'كتابة', 'حساب', 'سلسلة', 'روليت', 'مافيا']) assert(d.includes('.' + w), w);
   });
   await t('every game in the list can be played alone, except roulette and mafia', () => {
     assert(typing.min === 1 && math.min === 1 && chain.min === 1);
