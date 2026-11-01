@@ -38,7 +38,7 @@ const LAYOUTS = [
   { id: 'compact', label: 'Compact' },
 ];
 
-const DEFAULTS = { theme: 'midnight', accent: null, shape: 'circle', layout: 'full', featured: null, about: '' };
+const DEFAULTS = { theme: 'midnight', accent: null, shape: 'circle', layout: 'full', featured: null, about: '', bg: null, chips: [] };
 
 const byId = (list, id) => list.find(x => x.id === id) || null;
 const themeOf = (id) => byId(THEMES, id) || THEMES[0];
