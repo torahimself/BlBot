@@ -91,7 +91,7 @@ async function levelRing(g, cx, cy, r, lw, lv, accent, P) {
   g.restore();
   R.text(g, String(lv.level), cx, cy - 4, { size: 62, bold: true, color: P.text, align: 'center', baseline: 'middle', maxW: r * 1.5 });
   R.text(g, 'LEVEL', cx, cy + 38, { size: 17, bold: true, color: accent, align: 'center', baseline: 'middle' });
-  R.text(g, lv.need ? `${fmt.num(lv.into)} / ${fmt.num(lv.need)} XP` : 'MAX', cx, cy + 62, { size: 15, color: P.sub, align: 'center', baseline: 'middle', maxW: r * 1.6 });
+  R.text(g, lv.need ? `${fmt.num(lv.into)} / ${fmt.num(lv.need)} XP` : 'MAX', cx, cy + 60, { size: 15, color: P.sub, align: 'center', baseline: 'middle', maxW: r * 1.3, minSize: 11 });
 }
 
 /** One stat tile. spec: { icon, label, value, sub?, bar?: {frac, hint} } */
@@ -100,14 +100,14 @@ async function tile(g, x, y, w, h, spec, P, accent) {
   g.save(); g.strokeStyle = R.rgba(accent, 0.85); g.lineWidth = 3; g.lineCap = 'round';
   g.beginPath(); g.moveTo(x + 18, y + 1.5); g.lineTo(x + 46, y + 1.5); g.stroke(); g.restore();      // accent tab on the top edge
   R.drawEmoji(g, await R.emoji(spec.icon), x + w - 52, y + 16, 34);
-  R.text(g, spec.label, x + 20, y + 32, { size: 16, bold: true, color: P.sub, baseline: 'middle', maxW: w - 84 });
+  R.text(g, spec.label, x + 20, y + 30, { size: 16, bold: true, color: P.sub, baseline: 'middle', maxW: w - 84 });
   const hasLow = !!(spec.sub || spec.bar);
-  R.text(g, spec.value, x + 20, y + (hasLow ? 78 : 88), { size: 38, bold: true, color: P.text, maxW: w - 40, minSize: 20 });
+  R.text(g, spec.value, x + 20, y + (hasLow ? 76 : 92), { size: 38, bold: true, color: P.text, maxW: w - 40, minSize: 20 });
   if (spec.bar) {
-    R.bar(g, x + 20, y + h - 26, w - 40 - (spec.bar.hint ? 62 : 0), 9, spec.bar.frac, accent, P.track);
-    if (spec.bar.hint) R.text(g, spec.bar.hint, x + w - 20, y + h - 21, { size: 15, bold: true, color: P.sub, align: 'right', baseline: 'middle' });
+    R.bar(g, x + 20, y + h - 28, w - 40 - (spec.bar.hint ? 62 : 0), 9, spec.bar.frac, accent, P.track);
+    if (spec.bar.hint) R.text(g, spec.bar.hint, x + w - 20, y + h - 23, { size: 15, bold: true, color: P.sub, align: 'right', baseline: 'middle' });
   } else if (spec.sub) {
-    R.text(g, spec.sub, x + 20, y + h - 20, { size: 16, color: P.sub, baseline: 'middle', maxW: w - 40 });
+    R.text(g, spec.sub, x + 20, y + h - 22, { size: 16, color: P.sub, baseline: 'middle', maxW: w - 40 });
   }
 }
 
@@ -123,7 +123,7 @@ async function render({ name, avatar, data, prefs }) {
   const P = themes.palette(art ? { ...theme, dark: true } : theme, accent);        // pictures are always dark: keep the text white
   const compact = prefs.layout === 'compact';
   const PAD = 26, L = PAD + 32, Rr = W - PAD - 32;
-  const H = compact ? 532 : 640;
+  const H = compact ? 538 : 676;
 
   const { c, g } = R.newCanvas(W, H);
   if (!(art && await backgrounds.paint(g, W, H, prefs.bg, accent))) R.background(g, W, H, theme, accent);
@@ -182,7 +182,7 @@ async function render({ name, avatar, data, prefs }) {
   }
 
   // ── tiles ──
-  const gap = 16, tw = (Rr - L - gap * 3) / 4, th = 118;
+  const gap = 16, tw = (Rr - L - gap * 3) / 4, th = 124, rowGap = 14;
   const [tv, tt] = m.tracks;
   const row1 = [
     { icon: '💰', label: 'COINS', value: fmt.num(m.coins) },
@@ -198,7 +198,7 @@ async function render({ name, avatar, data, prefs }) {
     { icon: '⚡', label: 'ACTIVE BOOST', value: m.boost ? `×${m.boost.multiplier} ${m.boost.type === 'voice' ? 'Voice' : 'Typing'}` : 'None', sub: m.boost ? leftText(m.boost.msLeft) : 'Potions drop while you chat' },
   ];
   const rows = compact ? [row1] : [row1, row2];
-  for (let r = 0; r < rows.length; r++) for (let i = 0; i < 4; i++) await tile(g, L + i * (tw + gap), 360 + r * (th + 16), tw, th, rows[r][i], P, accent);
+  for (let r = 0; r < rows.length; r++) for (let i = 0; i < 4; i++) await tile(g, L + i * (tw + gap), 366 + r * (th + rowGap), tw, th, rows[r][i], P, accent);
   return R.toPng(c);
 }
 
