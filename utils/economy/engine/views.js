@@ -29,6 +29,10 @@ function titleInfo(titleId) {
     const tier = settings.milestones[m[1]].tiers[Number(m[2]) - 1];
     return tier ? { kind: 'milestone', track: m[1], n: Number(m[2]), name: tier.name, emoji: tier.emoji } : null;
   }
+  if (/^st_/.test(titleId || '')) {
+    const s = require('./streaks').info(titleId);
+    return s ? { kind: 'streak', name: s.name, emoji: s.emoji, hint: `${s.days}-day streak`, n: s.days } : null;
+  }
   if (/^gb_/.test(titleId || '')) {
     const b = require('../../games/badges.js').info(titleId);
     return b ? { kind: 'game', name: b.name, emoji: b.emoji, hint: b.hint } : null;
@@ -47,12 +51,15 @@ async function profileData(userId) {
   const bal = await dbx.get('SELECT balance FROM users WHERE userId = ?', [userId]);
   const tot = await dbx.get('SELECT chars, voiceMinutes FROM act_totals WHERE userId = ?', [userId]);
   const titles = await dbx.all('SELECT titleId, category, earnedAt FROM titles WHERE userId = ?', [userId]);
-  return {
+  const data = {
     balance: bal ? bal.balance : 0,
     chars: tot ? tot.chars : 0,
     voiceMinutes: tot ? tot.voiceMinutes : 0,
     titles,
   };
+  // Level, ranks, streak, games, boost (for the picture card). A failure here never breaks the profile.
+  try { data.extra = await require('../../ui/profileStats.js').gather(userId, data); } catch (err) { console.error('[Profile] extras failed:', err.message); }
+  return data;
 }
 
 // Tiers (sorted 1..n) the member has unlocked on a track.
@@ -103,7 +110,7 @@ function profileEmbed({ name, avatarUrl, data }) {
     .sort((a, b) => a.t.earnedAt - b.t.earnedAt || a.t.titleId.localeCompare(b.t.titleId));
   for (const x of eventTitles) featured.push(`${x.info.emoji} **${x.info.name}**`);
 
-  const gameBadges = data.titles.map((t) => titleInfo(t.titleId)).filter((i) => i && i.kind === 'game');
+  const gameBadges = data.titles.map((t) => titleInfo(t.titleId)).filter((i) => i && (i.kind === 'game' || i.kind === 'streak'));
 
   const embed = new EmbedBuilder()
     .setColor(fmt.tierStyle(Math.min(MAX_TIER, Math.max(topVoice, topText, 1))).color || BLURPLE)
@@ -120,6 +127,10 @@ function profileEmbed({ name, avatarUrl, data }) {
       value: eventTitles.map((x) => `${x.info.emoji} **${x.info.name}** — ${x.info.event.name} · ${x.info.tier.emoji} ${x.info.tier.label}`).join('\n').slice(0, 1024),
       inline: false,
     });
+  }
+  if (data.extra && data.extra.streak) {
+    const st = data.extra.streak;
+    embed.addFields({ name: '🔥 Daily streak', value: `**${st.current}** day(s) · best **${st.best}** · level **${data.extra.level ? data.extra.level.level : 0}**`, inline: false });
   }
   if (gameBadges.length) {
     embed.addFields({ name: '🎮 Game badges', value: gameBadges.map((i) => `${i.emoji} **${i.name}**`).join('  ·  ').slice(0, 1024), inline: false });
