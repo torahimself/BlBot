@@ -19,7 +19,7 @@ const ROLES = {
 };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-function mafiaCount(n) { return Math.max(1, Math.floor(n / 4)); }   // 5–7 → 1, 8–11 → 2, 12 → 3
+function mafiaCount(n) { return Math.max(1, Math.floor(n / 4)); }   // 5–7 → 1, 8–11 → 2, 12–15 → 3, 16–19 → 4, 20 → 5
 
 function assignRoles(ids, rng = Math.random) {
   const pool = [...ids];
