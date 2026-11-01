@@ -2,7 +2,7 @@
 // The "🎨 Customize" panel: a private message with a live preview of the member's own profile card and
 // menus / buttons to change it. Every change is saved at once. Only the owner can use it.
 //
-// custom ids (all start with "ui:"):  ui:open:<id>  ui:th:<id>  ui:ac:<id>  ui:ft:<id>  ui:b:<action>:<id>
+// custom ids (all start with "ui:"):  ui:open:<id>  ui:th:<id>  ui:ac:<id>  ui:ch:<id>  ui:b:<action>:<id>
 //                                      modals: ui:m:about:<id>  ui:m:color:<id>
 
 const {
@@ -14,6 +14,7 @@ const themes = require('./themes');
 const prefsStore = require('./prefs');
 const profileCard = require('./profileCard');
 const views = require('../economy/engine/views');
+const backgrounds = require('./backgrounds');
 
 const EPHEMERAL = 64;
 
@@ -54,12 +55,24 @@ async function panel(userId, interaction) {
       ...themes.ACCENTS.map(a => new StringSelectMenuOptionBuilder().setLabel(a.label).setValue(a.id).setEmoji(a.emoji).setDefault(a.hex === prefs.accent)),
     ]);
 
-  const featOpts = [new StringSelectMenuOptionBuilder().setLabel('Best title (automatic)').setValue('auto').setEmoji('⭐').setDefault(!prefs.featured || !m.titles.some(t => t.id === prefs.featured))];
-  for (const t of m.titles.slice(0, 24)) {
-    featOpts.push(new StringSelectMenuOptionBuilder().setLabel(t.name.slice(0, 100)).setDescription(t.sub.slice(0, 100)).setValue(t.id).setEmoji(t.emoji).setDefault(t.id === prefs.featured));
+  // Titles shown next to the name: pick up to 3 (none picked = the best three automatically).
+  const mine = prefs.chips || [];
+  const chipOpts = m.titles.slice(0, 25).map(t => new StringSelectMenuOptionBuilder().setLabel(t.name.slice(0, 100)).setDescription(t.sub.slice(0, 100)).setValue(t.id).setEmoji(t.emoji).setDefault(mine.includes(t.id)));
+  const chipMenu = new StringSelectMenuBuilder().setCustomId(`ui:ch:${userId}`)
+    .setPlaceholder(m.titles.length ? (mine.length ? `Titles by your name (${mine.length} chosen)` : 'Titles by your name: automatic (best 3)') : 'Titles by your name — earn a title first')
+    .setMinValues(0).setMaxValues(Math.max(1, Math.min(3, chipOpts.length)));
+  if (chipOpts.length) chipMenu.addOptions(chipOpts); else chipMenu.addOptions(new StringSelectMenuOptionBuilder().setLabel('No titles yet').setValue('none')).setDisabled(true);
+
+  // Backgrounds: every one is listed; locked ones say what unlocks them (picking one just tells the member).
+  const ctx = { bestStreak: (data.extra && data.extra.streak && data.extra.streak.best) || 0, level: (data.extra && data.extra.level && data.extra.level.level) || 0, titleIds: data.titles.map(t => t.titleId) };
+  const bgOpts = [new StringSelectMenuOptionBuilder().setLabel('Theme default').setValue('theme').setEmoji('🎨').setDescription('The plain theme background').setDefault(!prefs.bg)];
+  for (const b of backgrounds.all()) {
+    const open = backgrounds.isUnlocked(b, ctx);
+    bgOpts.push(new StringSelectMenuOptionBuilder().setLabel(b.label.slice(0, 100)).setValue(b.id).setEmoji(open ? b.emoji : '🔒')
+      .setDescription((open ? (b.unlock ? 'Unlocked · ' : '') + backgrounds.describe(b) : 'Unlock: ' + backgrounds.describe(b)).slice(0, 100)).setDefault(b.id === prefs.bg));
   }
-  const featMenu = new StringSelectMenuBuilder().setCustomId(`ui:ft:${userId}`)
-    .setPlaceholder(m.titles.length ? 'Featured title' : 'Featured title — earn a title first').addOptions(featOpts).setDisabled(!m.titles.length);
+  const curBg = prefs.bg && backgrounds.byId(prefs.bg);
+  const bgMenu = new StringSelectMenuBuilder().setCustomId(`ui:bg:${userId}`).setPlaceholder(`Background: ${curBg ? curBg.label : 'theme default'}`).addOptions(bgOpts);
 
   const shape = themes.byId(themes.SHAPES, prefs.shape), layout = themes.byId(themes.LAYOUTS, prefs.layout);
   const buttons = new ActionRowBuilder().addComponents(
@@ -70,10 +83,10 @@ async function panel(userId, interaction) {
     new ButtonBuilder().setCustomId(`ui:b:reset:${userId}`).setLabel('Reset').setEmoji('↩️').setStyle(ButtonStyle.Danger),
   );
   return {
-    content: '🎨 **Customize your card** — changes save instantly and also style your **/inventory**. Run **/profile** to show it off.',
+    content: '🎨 **Customize your card** — changes save instantly and also style your **/inventory**. Run **/profile** to show it off.\n-# **Level** grows with everything you do: voice time, typing, games and active days. **Days active** = how many different days you have used the bot.',
     files: [new AttachmentBuilder(png, { name: 'preview.png' })],
     attachments: [],
-    components: [new ActionRowBuilder().addComponents(themeMenu), new ActionRowBuilder().addComponents(accentMenu), new ActionRowBuilder().addComponents(featMenu), buttons],
+    components: [new ActionRowBuilder().addComponents(bgMenu), new ActionRowBuilder().addComponents(themeMenu), new ActionRowBuilder().addComponents(accentMenu), new ActionRowBuilder().addComponents(chipMenu), buttons],
     allowedMentions: { parse: [] },
   };
 }
@@ -138,11 +151,22 @@ async function handle(interaction) {
     }
 
     await interaction.deferUpdate();
+    let lockedNote = '';
     if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
       const v = interaction.values[0];
       if (kind === 'th') await prefsStore.set(ownerId, { theme: v });
       else if (kind === 'ac') await prefsStore.set(ownerId, { accent: v === 'theme' ? null : (themes.ACCENTS.find(a => a.id === v) || {}).hex });
-      else if (kind === 'ft') await prefsStore.set(ownerId, { featured: v === 'auto' ? null : v });
+      else if (kind === 'ch') await prefsStore.set(ownerId, { chips: interaction.values.filter(x => x !== 'none'), featured: null });
+      else if (kind === 'bg') {
+        if (v === 'theme') await prefsStore.set(ownerId, { bg: null });
+        else {
+          const b = backgrounds.byId(v);
+          const data = await views.profileData(ownerId);
+          const ctx = { bestStreak: (data.extra && data.extra.streak && data.extra.streak.best) || 0, level: (data.extra && data.extra.level && data.extra.level.level) || 0, titleIds: data.titles.map(t => t.titleId) };
+          if (b && backgrounds.isUnlocked(b, ctx)) await prefsStore.set(ownerId, { bg: v });
+          else lockedNote = `🔒 **${b ? b.label : 'That background'}** is locked — unlock it with: ${b ? backgrounds.describe(b) : '—'}.`;
+        }
+      }
     } else if (kind === 'b') {
       const p = await prefsStore.get(ownerId);
       if (parts[2] === 'shape') await prefsStore.set(ownerId, { shape: next(themes.SHAPES, p.shape) });
@@ -150,6 +174,7 @@ async function handle(interaction) {
       else if (parts[2] === 'reset') await prefsStore.reset(ownerId);
     }
     await interaction.editReply(await panel(ownerId, interaction));
+    if (lockedNote) await interaction.followUp({ content: lockedNote, flags: EPHEMERAL }).catch(() => {});
     return true;
   } catch (err) {
     console.error('[UI] customize failed:', err);
