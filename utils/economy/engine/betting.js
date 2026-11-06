@@ -15,7 +15,7 @@ const settings = require('./settings');
 const time = require('./time');
 const dbx = require('./dbx');
 
-const cap = () => settings.betting.weeklyNetProfitCap;
+const cap = () => { const c = settings.betting.weeklyNetProfitCap; return Number.isFinite(c) ? c : Infinity; };
 
 async function weeklyNetOn(userId, week) {
   const row = await dbx.get('SELECT net FROM bet_net WHERE userId = ? AND week = ?', [userId, week]);
