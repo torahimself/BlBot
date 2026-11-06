@@ -19,8 +19,7 @@ module.exports = {
       option.setName('bet')
         .setDescription('Amount of coins to bet (leave empty to play for free)')
         .setRequired(false)
-        .setMinValue(1)
-        .setMaxValue(1000)),
+        .setMinValue(1)),
 
   async execute(interaction) {
     if (!allowedChannels.includes(interaction.channelId)) {
