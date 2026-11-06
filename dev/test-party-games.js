@@ -2,6 +2,7 @@
 // Arabic party games — tests with mocked Discord objects, in-memory DB.
 //   node dev/test-party-games.js
 process.env.BL_ECONOMY_DB = ':memory:';
+require(require('path').join(__dirname, '..', 'utils/economy/engine/settings.js')).betting.weeklyNetProfitCap = 10000; // cap tests: re-enable the (default-off) weekly cap
 const assert = require('assert');
 const path = require('path');
 const root = path.join(__dirname, '..');
@@ -124,7 +125,7 @@ async function lobby(def, host, bet, ch) {
     assert.strictEqual(p('.انسان حيوان').type, 'categories');
     assert.strictEqual(p('.انسان حيوان 200').bet, 200);
     assert.strictEqual(p('.مافيا 5').error !== undefined, true, 'bet below min');
-    assert.strictEqual(p('.مافيا 99999999').error !== undefined, true, 'bet above max');
+    assert.strictEqual(p('.مافيا 99999999').error, undefined, 'no max bet'); assert.strictEqual(p('.مافيا 99999999').bet, 99999999, 'huge bet accepted');
     assert.strictEqual(p('.علم abc').bet, 0);
     assert.strictEqual(p('علم'), null); assert.strictEqual(p('hello'), null); assert.strictEqual(p('.شيء'), null); assert.strictEqual(p('.'), null);
   });
