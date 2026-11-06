@@ -75,7 +75,7 @@ module.exports = {
           { name: 'Week (Sun→Sat Riyadh)', value:
             `Typing ${fmt.num(usage.text.weekCoins)}/${fmt.num(usage.text.weeklyCap)} · 30d ${fmt.num(usage.text.rollCoins)}/${fmt.num(usage.text.rollingCap)}\n` +
             `Voice ${fmt.num(usage.voice.weekCoins)}/${fmt.num(usage.voice.weeklyCap)} · 30d ${fmt.num(usage.voice.rollCoins)}/${fmt.num(usage.voice.rollingCap)}\n` +
-            `Bet net ${fmt.num(net)}/${fmt.num(settings.betting.weeklyNetProfitCap)}\n` +
+            `Bet net ${fmt.num(net)}${Number.isFinite(settings.betting.weeklyNetProfitCap) ? '/' + fmt.num(settings.betting.weeklyNetProfitCap) : ' (no limit)'}\n` +
             `Drops this week ${dropsWeek ? dropsWeek.count : 0}/${settings.drops.maxPerWeek}\n` +
             `Resets ${fmt.tsRel(usage.resetAt)}` },
           { name: 'Potions', value: pots.length ? pots.map(p => `${p.type} ${p.hours}h`).join(', ') : 'none', inline: true },
