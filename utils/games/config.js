@@ -23,7 +23,6 @@ module.exports = {
       math:       ['حساب', 'رياضيات', 'مسائل'],
     },
     minBet: 10,
-    maxBet: 10000,
     // «.توقف» — the member who started the game (or a moderator) stops it; every stake is refunded.
     stopWords: ['توقف', 'ايقاف', 'وقف', 'ستوب'],
     // «.العاب» — shows every game with a one-line explanation.
