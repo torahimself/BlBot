@@ -95,13 +95,14 @@ async function render({ name, avatar, state, prefs }) {
   R.fillRR(g, rx, wy, rw, wh, 24, P.tile, P.faint, 2);
   let ry = wy + 22;
   for (const w of m.week) {
-    const frac = w.cap > 0 ? w.value / w.cap : 0;
+    const noCap = !Number.isFinite(w.cap);
+    const frac = !noCap && w.cap > 0 ? w.value / w.cap : 0;
     R.drawEmoji(g, await R.emoji(w.icon), rx + 20, ry, 36);
-    const val = `${fmt.num(w.value)} / ${fmt.num(w.cap)}`;
+    const val = noCap ? `${fmt.num(w.value)}` : `${fmt.num(w.value)} / ${fmt.num(w.cap)}`;
     const vw = R.measure(g, val, 20, frac >= 1);
     R.text(g, w.label, rx + 66, ry + 18, { size: 22, bold: true, color: P.text, baseline: 'middle', maxW: rw - 66 - 20 - vw - 12 });
     R.text(g, val, rx + rw - 20, ry + 18, { size: 20, color: frac >= 1 ? accent : P.sub, bold: frac >= 1, align: 'right', baseline: 'middle' });
-    R.bar(g, rx + 20, ry + 48, rw - 40, 14, frac, accent, P.track);
+    if (!noCap) R.bar(g, rx + 20, ry + 48, rw - 40, 14, frac, accent, P.track);
     ry += 92;
   }
   R.drawEmoji(g, await R.emoji('⏳'), rx + 20, wy + wh - 52, 30);
