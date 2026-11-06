@@ -115,7 +115,8 @@ const settings = {
   betting: {
     // Max NET profit a member can make from bets per week. Net = winnings
     // minus losses, so losing first gives room to win it back.
-    weeklyNetProfitCap: 10000,
+    // null = NO limit (members can win as much as they like). Set a number to re-enable.
+    weeklyNetProfitCap: null,
   },
 
   // ── Milestones (10 tiers per track) ───────────────────────────────────────
