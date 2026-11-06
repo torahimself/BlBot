@@ -46,8 +46,8 @@ function parseTrigger(content) {
   if (rest.length) {
     if (!/^\d+$/.test(rest[0])) return { type, bet: 0 };
     bet = parseInt(rest[0], 10);
-    if (bet < cfg.trigger.minBet || bet > cfg.trigger.maxBet) {
-      return { type, error: `❌ الرهان يجب أن يكون بين **${cfg.trigger.minBet}** و **${cfg.trigger.maxBet}** عملة (أو اتركه فارغًا للعب المجاني).` };
+    if (bet < cfg.trigger.minBet) {
+      return { type, error: `❌ أقل رهان هو **${cfg.trigger.minBet}** عملة (أو اتركه فارغًا للعب المجاني).` };
     }
   }
   return { type, bet };
