@@ -2,6 +2,7 @@
 // Game-flow tests with mocked Discord interactions. In-memory DB.
 //   node dev/test-games.js
 process.env.BL_ECONOMY_DB = ':memory:';
+require(require('path').join(__dirname, '..', 'utils/economy/engine/settings.js')).betting.weeklyNetProfitCap = 10000; // cap tests: re-enable the (default-off) weekly cap
 const assert = require('assert');
 const path = require('path');
 const root = path.join(__dirname, '..');
