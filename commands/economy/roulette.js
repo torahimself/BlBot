@@ -21,9 +21,9 @@ function pickPocket(landed) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('roulette')
-        .setDescription('Red or black (50% win chance) — play for free or bet up to 1000')
+        .setDescription('Red or black (50% win chance) — play for free or bet coins')
         .addStringOption(option => option.setName('color').setDescription('Red or black').setRequired(true).addChoices({ name: 'Red', value: 'red' }, { name: 'Black', value: 'black' }))
-        .addIntegerOption(option => option.setName('bet').setDescription('Amount to gamble (leave empty to play for free)').setRequired(false).setMinValue(1).setMaxValue(1000)),
+        .addIntegerOption(option => option.setName('bet').setDescription('Amount to gamble (leave empty to play for free)').setRequired(false).setMinValue(1)),
     async execute(interaction) {
         if (!allowedChannels.includes(interaction.channelId)) {
             return interaction.editReply(`❌ Games can only be played in ${GAME_CHANNELS.mention}.`);
