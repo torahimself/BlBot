@@ -4,6 +4,7 @@
 // data/economy.db and needs no Discord connection.
 
 process.env.BL_ECONOMY_DB = ':memory:';
+require(require('path').join(__dirname, '..', 'utils/economy/engine/settings.js')).betting.weeklyNetProfitCap = 10000; // cap tests: re-enable the (default-off) weekly cap
 const path = require('path');
 const E = (f) => require(path.join(__dirname, '..', 'utils', 'economy', 'engine', f));
 
