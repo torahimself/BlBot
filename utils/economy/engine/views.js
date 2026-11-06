@@ -194,7 +194,7 @@ async function inventoryPayload(userId, { now = Date.now(), notice = '', user = 
   const weekly = [
     `⌨️ Typing: **${fmt.num(usage.text.weekCoins)}** / ${fmt.num(usage.text.weeklyCap)} coins`,
     `🎧 Voice: **${fmt.num(usage.voice.weekCoins)}** / ${fmt.num(usage.voice.weeklyCap)} coins`,
-    `🎲 Betting profit: **${fmt.num(Math.max(0, net))}** / ${fmt.num(betCap)} coins`,
+    `🎲 Betting profit: **${fmt.num(Math.max(0, net))}**${Number.isFinite(betCap) ? ' / ' + fmt.num(betCap) : ''} coins`,
     `🔄 Resets ${fmt.tsRel(usage.resetAt)}`,
   ].join('\n');
 
