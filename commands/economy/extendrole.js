@@ -30,7 +30,7 @@ module.exports = {
         const timeLeft = roleData.expirationDate - Date.now();
 
         if (timeLeft <= 0) {
-            return interaction.editReply('❌ Your role has already expired. Purchase a new one with `/buyrole`.');
+            return interaction.editReply('❌ Your role has already expired. Purchase a new one with `/buy`.');
         }
 
         if (timeLeft > EXPIRATION_WARNING_MS) {
