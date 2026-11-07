@@ -27,6 +27,7 @@ function start(client) {
 
   const eventTick = () => {
     events.finalizeIfDue(client).catch((err) => console.error('[Event] finalize failed:', err));
+    require('../seasonalShop.js').tick(client).catch((err) => console.error('[Shop] clock failed:', err.message));
     events.updateProgressMessage(client).catch((err) => console.error('[Event] progress update failed:', err.message));
   };
   const prune = () => {
