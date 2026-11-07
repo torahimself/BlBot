@@ -15,6 +15,7 @@ const prefsStore = require('./prefs');
 const profileCard = require('./profileCard');
 const views = require('../economy/engine/views');
 const backgrounds = require('./backgrounds');
+const seasonal = require('../economy/seasonalShop');
 
 const EPHEMERAL = 64;
 
@@ -45,8 +46,16 @@ async function panel(userId, interaction) {
   const m = profileCard.model(data, prefs);
   const theme = themes.themeOf(prefs.theme);
 
+  // Seasonal-shop colours / backgrounds: owners always see them; everyone else sees them (locked) only while the shop is open.
+  const owned = await seasonal.ownedIds(userId).catch(() => []);
+  const shopOpen = seasonal.phase() === 'open';
+  const themeOpts = themes.THEMES.filter(t => !t.shop || owned.includes(t.shop) || shopOpen);
   const themeMenu = new StringSelectMenuBuilder().setCustomId(`ui:th:${userId}`).setPlaceholder(`Theme: ${theme.label}`)
-    .addOptions(themes.THEMES.map(t => new StringSelectMenuOptionBuilder().setLabel(t.label).setValue(t.id).setEmoji(t.emoji).setDefault(t.id === prefs.theme)));
+    .addOptions(themeOpts.map(t => {
+      const locked = t.shop && !owned.includes(t.shop);
+      const o = new StringSelectMenuOptionBuilder().setLabel(t.label).setValue(t.id).setEmoji(locked ? '🔒' : t.emoji).setDefault(t.id === prefs.theme);
+      return locked ? o.setDescription('Seasonal shop — buy it with /buy') : o;
+    }));
 
   const accentMenu = new StringSelectMenuBuilder().setCustomId(`ui:ac:${userId}`)
     .setPlaceholder(prefs.accent ? `Accent: ${(themes.ACCENTS.find(a => a.hex === prefs.accent) || { label: prefs.accent }).label}` : 'Accent colour: theme default')
@@ -64,9 +73,9 @@ async function panel(userId, interaction) {
   if (chipOpts.length) chipMenu.addOptions(chipOpts); else chipMenu.addOptions(new StringSelectMenuOptionBuilder().setLabel('No titles yet').setValue('none')).setDisabled(true);
 
   // Backgrounds: every one is listed; locked ones say what unlocks them (picking one just tells the member).
-  const ctx = { bestStreak: (data.extra && data.extra.streak && data.extra.streak.best) || 0, level: (data.extra && data.extra.level && data.extra.level.level) || 0, titleIds: data.titles.map(t => t.titleId) };
+  const ctx = { bestStreak: (data.extra && data.extra.streak && data.extra.streak.best) || 0, level: (data.extra && data.extra.level && data.extra.level.level) || 0, titleIds: data.titles.map(t => t.titleId), shopItems: owned };
   const bgOpts = [new StringSelectMenuOptionBuilder().setLabel('Theme default').setValue('theme').setEmoji('🎨').setDescription('The plain theme background').setDefault(!prefs.bg)];
-  for (const b of backgrounds.all()) {
+  for (const b of backgrounds.all().filter(b => !(b.unlock && b.unlock.shop) || owned.includes(b.unlock.shop) || shopOpen)) {
     const open = backgrounds.isUnlocked(b, ctx);
     bgOpts.push(new StringSelectMenuOptionBuilder().setLabel(b.label.slice(0, 100)).setValue(b.id).setEmoji(open ? b.emoji : '🔒')
       .setDescription((open ? (b.unlock ? 'Unlocked · ' : '') + backgrounds.describe(b) : 'Unlock: ' + backgrounds.describe(b)).slice(0, 100)).setDefault(b.id === prefs.bg));
@@ -154,7 +163,11 @@ async function handle(interaction) {
     let lockedNote = '';
     if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
       const v = interaction.values[0];
-      if (kind === 'th') await prefsStore.set(ownerId, { theme: v });
+      if (kind === 'th') {
+        const th = themes.byId(themes.THEMES, v);
+        if (th && th.shop && !(await seasonal.ownedIds(ownerId)).includes(th.shop)) lockedNote = `🔒 **${th.label}** is a seasonal-shop colour — buy it with **/buy** while the shop is open.`;
+        else await prefsStore.set(ownerId, { theme: v });
+      }
       else if (kind === 'ac') await prefsStore.set(ownerId, { accent: v === 'theme' ? null : (themes.ACCENTS.find(a => a.id === v) || {}).hex });
       else if (kind === 'ch') await prefsStore.set(ownerId, { chips: interaction.values.filter(x => x !== 'none'), featured: null });
       else if (kind === 'bg') {
@@ -162,7 +175,7 @@ async function handle(interaction) {
         else {
           const b = backgrounds.byId(v);
           const data = await views.profileData(ownerId);
-          const ctx = { bestStreak: (data.extra && data.extra.streak && data.extra.streak.best) || 0, level: (data.extra && data.extra.level && data.extra.level.level) || 0, titleIds: data.titles.map(t => t.titleId) };
+          const ctx = { bestStreak: (data.extra && data.extra.streak && data.extra.streak.best) || 0, level: (data.extra && data.extra.level && data.extra.level.level) || 0, titleIds: data.titles.map(t => t.titleId), shopItems: await seasonal.ownedIds(ownerId) };
           if (b && backgrounds.isUnlocked(b, ctx)) await prefsStore.set(ownerId, { bg: v });
           else lockedNote = `🔒 **${b ? b.label : 'That background'}** is locked — unlock it with: ${b ? backgrounds.describe(b) : '—'}.`;
         }
