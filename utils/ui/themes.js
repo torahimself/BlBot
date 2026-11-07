@@ -13,6 +13,11 @@ const THEMES = [
   { id: 'sunset',   label: 'Sunset',   emoji: '🌅', dark: true,  bg: ['#2b0f3a', '#8a2f3a'], pattern: 'diag',  accent: '#ffb347' },
   { id: 'carbon',   label: 'Carbon',   emoji: '⚫', dark: true,  bg: ['#0c0d10', '#23252d'], pattern: 'grid',  accent: '#e6e8f0' },
   { id: 'snow',     label: 'Snow',     emoji: '❄️', dark: false, bg: ['#eef1fa', '#cfd8ee'], pattern: 'dots',  accent: '#4f63e8' },
+  // Seasonal shop colours (/buy → Seasonal shop). `shop` = the item id a member must own; owners keep them forever.
+  { id: 'amber',    label: 'Amber Dusk',    emoji: '🍯', dark: true,  bg: ['#2a1205', '#7a3a0a'], pattern: 'diag',  accent: '#ffb13b', shop: 'theme_amber' },
+  { id: 'maple',    label: 'Maple Red',     emoji: '🍁', dark: true,  bg: ['#2b0a0a', '#7a1f1a'], pattern: 'hex',   accent: '#ff5a3c', shop: 'theme_maple' },
+  { id: 'plum',     label: 'Plum Twilight', emoji: '🍇', dark: true,  bg: ['#1c0d2b', '#4b2060'], pattern: 'stars', accent: '#e0a3ff', shop: 'theme_plum' },
+  { id: 'mist',     label: 'Misty Morning', emoji: '🌫️', dark: false, bg: ['#eceff3', '#c9d3de'], pattern: 'waves', accent: '#d9772b', shop: 'theme_mist' },
 ];
 
 const ACCENTS = [
