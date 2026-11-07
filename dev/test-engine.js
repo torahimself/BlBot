@@ -9,6 +9,7 @@ const path = require('path');
 const E = (f) => require(path.join(__dirname, '..', 'utils', 'economy', 'engine', f));
 
 const settings = E('settings.js');
+settings.events.current = 'halloween-2026';   // the live config has no event now; these tests exercise the event engine with the Halloween template
 const dbx = E('dbx.js');
 const time = E('time.js');
 const activity = E('activity.js');
