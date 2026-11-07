@@ -87,6 +87,28 @@ const DRAWN = [
   } },
 ];
 
+DRAWN.push(
+  { id: 'leaves', label: 'Falling Leaves', emoji: '🍃', unlock: { shop: 'bg_leaves' }, draw(g, W, H, rnd) {
+    base(g, W, H, '#1c0d05', '#5a2a0c', 1.2);
+    glow(g, W * 0.25, H * 0.15, W * 0.5, '#ffb347', 0.22);
+    const cols = ['#ff8a1f', '#e8541c', '#ffc23d', '#b8330f', '#d9772b'];
+    for (let i = 0; i < 70; i++) {
+      const x = rnd() * W, y = rnd() * H, s = 9 + rnd() * 16, a = rnd() * 6.28;
+      g.save(); g.translate(x, y); g.rotate(a); g.fillStyle = rgba(cols[Math.floor(rnd() * cols.length)], 0.3 + rnd() * 0.55);
+      g.beginPath(); g.moveTo(0, -s); g.quadraticCurveTo(s * 0.9, -s * 0.2, 0, s); g.quadraticCurveTo(-s * 0.9, -s * 0.2, 0, -s); g.fill();
+      g.strokeStyle = 'rgba(40,12,2,0.35)'; g.lineWidth = 1; g.beginPath(); g.moveTo(0, -s); g.lineTo(0, s); g.stroke(); g.restore();
+    }
+  } },
+  { id: 'harvest', label: 'Harvest Moon Night', emoji: '🌕', unlock: { shop: 'bg_harvest' }, draw(g, W, H, rnd) {
+    base(g, W, H, '#0a0712', '#3b1d0a', 1.5);
+    glow(g, W * 0.72, H * 0.3, W * 0.5, '#ffb347', 0.45);
+    g.fillStyle = '#ffe3a6'; g.beginPath(); g.arc(W * 0.72, H * 0.3, 92, 0, 7); g.fill();
+    g.fillStyle = 'rgba(190,140,70,0.35)'; for (let k = 0; k < 6; k++) { g.beginPath(); g.arc(W * 0.72 + (rnd() - 0.5) * 120, H * 0.3 + (rnd() - 0.5) * 110, 7 + rnd() * 16, 0, 7); g.fill(); }
+    dots(g, W, H, rnd, 50, '#ffe9c4', 0.5, 0.6, 1.8);
+    for (let layer = 0; layer < 2; layer++) { g.fillStyle = layer ? '#0b0504' : '#1c0e05'; g.beginPath(); g.moveTo(0, H); for (let x = 0; x <= W; x += 20) g.lineTo(x, H * (0.78 + layer * 0.08) + Math.sin(x / 90 + layer * 2) * 16); g.lineTo(W, H); g.closePath(); g.fill(); }
+  } },
+);
+
 // ── your own pictures ────────────────────────────────────────────────────────
 const DIR = process.env.BL_BG_DIR || ['assets', 'assests'].map(n => path.join(__dirname, '..', '..', n, 'backgrounds')).find(d => { try { return fs.existsSync(d); } catch (_) { return false; } })
   || path.join(__dirname, '..', '..', 'assets', 'backgrounds');
@@ -112,6 +134,7 @@ function normaliseUnlock(u) {
   if (Number(u.streak) > 0) out.streak = Math.floor(Number(u.streak));
   if (Number(u.level) > 0) out.level = Math.floor(Number(u.level));
   if (typeof u.title === 'string' && u.title) out.title = u.title;
+  if (typeof u.shop === 'string' && u.shop) out.shop = u.shop;
   return Object.keys(out).length ? out : null;
 }
 
@@ -125,6 +148,7 @@ function isUnlocked(bg, ctx) {
   if (u.streak && (ctx.bestStreak || 0) < u.streak) return false;
   if (u.level && (ctx.level || 0) < u.level) return false;
   if (u.title && !(ctx.titleIds || []).some(t => t.startsWith(u.title))) return false;
+  if (u.shop && !(ctx.shopItems || []).includes(u.shop)) return false;
   return true;
 }
 function describe(bg) {
@@ -133,6 +157,7 @@ function describe(bg) {
   const parts = [];
   if (u.streak) parts.push(`${u.streak}-day streak`);
   if (u.level) parts.push(`level ${u.level}`);
+  if (u.shop) parts.push('buy it in the seasonal shop (/buy)');
   if (u.title) parts.push(u.title.startsWith('gb_') ? 'win a party game' : u.title.startsWith('event_') ? 'an event title' : 'a special title');
   return parts.join(' + ');
 }
