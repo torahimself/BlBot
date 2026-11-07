@@ -37,6 +37,7 @@ function titleInfo(titleId) {
     const b = require('../../games/badges.js').info(titleId);
     return b ? { kind: 'game', name: b.name, emoji: b.emoji, hint: b.hint } : null;
   }
+  if (/^ss_/.test(titleId || '')) return require('../seasonalShop.js').titleInfo(titleId);   // bought in a seasonal shop
   const t = settings.eventTitles[titleId];
   if (t) {
     return {
