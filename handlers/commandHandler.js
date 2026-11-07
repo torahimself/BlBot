@@ -19,7 +19,9 @@ function loadCommands() {
       } else if (item.endsWith('.js')) {
         try {
           const command = require(itemPath);
-          if (command.data && command.data.name) {
+          if (typeof command.isEnabled === 'function' && !command.isEnabled()) {
+            console.log(`⏸️ Skipped command (disabled): ${command.data && command.data.name}`);
+          } else if (command.data && command.data.name) {
             commands.set(command.data.name, command);
             console.log(`✅ Loaded command: ${command.data.name}`);
           }
