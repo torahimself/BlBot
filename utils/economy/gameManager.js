@@ -111,10 +111,12 @@ async function runLMS(game, client) {
     let active = [...game.players];
     const pot = game.betAmount * active.length;
 
+    if (!games.has(game.id)) return;
     await channel.send(`🎲 **Last Man Standing** begins! **${active.length}** players${isBet(game.betAmount) ? ` — pot: **${pot}** coins` : ' — free game'}`);
     await new Promise(r => setTimeout(r, 2000));
 
     while (active.length > 1) {
+      if (!games.has(game.id) || game.paidOut) return;      // stopped (.توقف) or refunded: end quietly
       game.round++;
       const rolls = {};
       for (const pid of active) rolls[pid] = Math.floor(Math.random() * 6) + 1;
@@ -130,6 +132,7 @@ async function runLMS(game, client) {
       if (active.length > 1) await new Promise(r => setTimeout(r, 3000));
     }
 
+    if (!games.has(game.id) || game.paidOut) return;
     const winnerId = active[0];
     const res = await payWinner(game, winnerId, pot);
     await channel.send(`🏆 <@${winnerId}> is the last one standing and${winText(game, res, pot)}${noteText(res)}`);
