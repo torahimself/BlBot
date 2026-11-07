@@ -89,22 +89,78 @@ function isStopCommand(content) {
   return parts.length === 1 && STOP_WORDS.has(fold(parts[0]));
 }
 
-/** The host of the game, or a member who can manage messages (a moderator), may stop it. */
-function canStop(s, message) {
-  if (s.hostId === message.author.id || s.starterId === message.author.id) return true;
-  const perms = message.member && message.member.permissions;
-  return !!(perms && typeof perms.has === 'function' && (perms.has('ManageMessages') || perms.has('Administrator')));
+/** Staff = Administrator / Manage Messages, or one of the bot's configured staff roles (jail / warn). */
+function isStaff(message) {
+  const m = message.member;
+  if (!m) return false;
+  const perms = m.permissions;
+  if (perms && typeof perms.has === 'function' && (perms.has('ManageMessages') || perms.has('Administrator'))) return true;
+  try {
+    const config = require('../../config.js');
+    const ids = [...((config.jail && config.jail.staffRoleIds) || []), ...((config.warn && config.warn.staffRoleIds) || [])];
+    const roles = m.roles && m.roles.cache;
+    if (roles && ids.some(id => roles.has(id))) return true;
+  } catch (_) { /* config missing: permissions only */ }
+  return false;
 }
 
-/** Stops the game running in this channel. Returns true when the message was a stop command. */
+/** The host/starter of the game, or staff, may stop it at any time. */
+function canStop(s, message) {
+  if (s.hostId === message.author.id || s.starterId === message.author.id) return true;
+  return isStaff(message);
+}
+
+/** Everything that is running in this channel and can be stopped (party sessions, slash lobby games, duels). */
+function stoppables(channelId, s) {
+  const out = [];
+  if (s && s.status !== 'done') out.push({ kind: 'session', s, owner: s.starterId || s.hostId, hosts: [s.hostId, s.starterId] });
+  try {
+    const gm = require('../economy/gameManager.js');
+    for (const g of gm.games.values()) if (g.channelId === channelId && !g.paidOut) out.push({ kind: 'game', g, owner: g.hostId, hosts: [g.hostId] });
+    const dm = require('../economy/duelManager.js');
+    for (const d of dm.duels.values()) if (d.channelId === channelId) out.push({ kind: 'duel', d, owner: d.initiatorId, hosts: [d.initiatorId] });
+  } catch (_) { /* optional */ }
+  return out;
+}
+
+async function stopOne(t, message) {
+  const stoppedBy = `⏹️ أوقفها <@${message.author.id}>.`;
+  if (t.kind === 'session') return t.s.abort(stoppedBy);
+  const client = message.client;
+  if (t.kind === 'game') {
+    const gm = require('../economy/gameManager.js');
+    const g = t.g;
+    const ch = message.channel;
+    const msg = g.messageId && ch.messages ? await ch.messages.fetch(g.messageId).catch(() => null) : null;
+    // Hands every stake back once (paidOut guard), cancels the timers and frees the players.
+    await gm.refundGame(g, client, `⏹️ أوقفها ${message.author.username}`);
+    if (msg) await msg.edit({ components: [] }).catch(() => {});
+    return;
+  }
+  const dm = require('../economy/duelManager.js');
+  const stakes = require('../economy/stakes.js');
+  const d = t.d;
+  const msg = d.messageId && message.channel.messages ? await message.channel.messages.fetch(d.messageId).catch(() => null) : null;
+  dm.deleteDuel(d.id);
+  if (d.started && d.amount > 0) await stakes.refundStakes([d.initiatorId, d.targetId], d.amount).catch(e => console.error('[Stop] duel refund failed:', e));
+  if (msg) await msg.edit({ content: `⏹️ تم إيقاف اللعبة.${d.started && d.amount > 0 ? ' 💸 تم إرجاع الرهانات.' : ''}`, components: [] }).catch(() => {});
+}
+
+/** Stops whatever game is running in this channel. Returns true when the message was a stop command. */
 async function handleStop(message, s) {
-  if (!s || s.status === 'done') return true;                       // nothing to stop: stay quiet
-  if (!canStop(s, message)) {
-    const note = await message.reply({ content: `⛔ فقط من بدأ اللعبة (<@${s.starterId || s.hostId}>) أو المشرف يستطيع إيقافها.`, allowedMentions: { parse: [] } }).catch(() => null);
+  const list = stoppables(message.channel.id, s);
+  if (!list.length) return true;                                    // nothing to stop: stay quiet
+  const staff = isStaff(message);
+  const mine = list.filter(t => staff || t.hosts.includes(message.author.id) || (t.kind === 'duel' && t.d.targetId === message.author.id));
+  if (!mine.length) {
+    const owner = list[0].owner;
+    const note = await message.reply({ content: `⛔ فقط من بدأ اللعبة (<@${owner}>) أو المشرف يستطيع إيقافها.`, allowedMentions: { parse: [] } }).catch(() => null);
     if (note && typeof note.delete === 'function') setTimeout(() => note.delete().catch(() => {}), 6000);
     return true;
   }
-  await s.abort(`⏹️ أوقفها <@${message.author.id}>.`);
+  for (const t of mine) {
+    try { await stopOne(t, message); } catch (e) { console.error('[Stop] failed:', e); }
+  }
   return true;
 }
 
