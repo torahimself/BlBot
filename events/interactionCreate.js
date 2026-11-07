@@ -9,7 +9,7 @@ const partyGames = require('../utils/games/index.js');
 const economyViews = require('../utils/economy/engine/views.js');
 const uiCustomize = require('../utils/ui/customize.js');
 
-const MODAL_COMMANDS = ['buyrole', 'editrole'];
+const MODAL_COMMANDS = ['editrole'];
 const processingBuyRole = new Set();
 
 const { createCustomRole, editRole, getBalance, ROLE_PRICE, updateBalance, spendCoins } = shopManager;
@@ -72,6 +72,12 @@ module.exports = {
     // ---------- PARTY GAMES (buttons, select menus, forms with customId "pg:…") ----------
     if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && String(interaction.customId).startsWith('pg:')) {
       await partyGames.handleInteraction(interaction);
+      return;
+    }
+
+    // ---------- SHOP: /buy menu (customId "shop:…") ----------
+    if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && String(interaction.customId).startsWith('shop:')) {
+      await require('../utils/economy/buyMenu.js').handle(interaction);
       return;
     }
 
