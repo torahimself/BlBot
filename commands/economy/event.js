@@ -5,6 +5,8 @@ const views = require('../../utils/economy/engine/views.js');
 // Delete this file (or set events.current to null in
 // utils/economy/engine/settings.js) once the event is over.
 module.exports = {
+  // The command only exists while an event is running (settings.events.current). Loader skips it otherwise.
+  isEnabled: () => !!events.current(),
   data: new SlashCommandBuilder()
     .setName('event')
     .setDescription('Show the current server event: your Candy 🍬 and the community progress'),
