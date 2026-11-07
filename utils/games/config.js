@@ -24,7 +24,7 @@ module.exports = {
     },
     minBet: 10,
     // «.توقف» — the member who started the game (or a moderator) stops it; every stake is refunded.
-    stopWords: ['توقف', 'ايقاف', 'وقف', 'ستوب'],
+    stopWords: ['توقف', 'ايقاف', 'وقف', 'ستوب', 'stop'],
     // «.العاب» — shows every game with a one-line explanation.
     helpWords: ['العاب', 'ألعاب', 'الالعاب', 'قائمة'],
   },
