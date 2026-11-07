@@ -1,109 +1,114 @@
 'use strict';
-// «.توقف» — the member who started a game (or a moderator) stops it. In-memory DB, mocked Discord.
-//   node dev/test-stop.js
+// /buy menu + seasonal shop: opens/closes by the clock, buying is atomic, purchases are permanent.
+//   node dev/test-shop.js
 process.env.BL_ECONOMY_DB = ':memory:';
-const assert = require('assert');
 const path = require('path');
 const root = path.join(__dirname, '..');
 const db = require(path.join(root, 'utils/economy/database.js'));
 const dbx = require(path.join(root, 'utils/economy/engine/dbx.js'));
+const settings = require(path.join(root, 'utils/economy/engine/settings.js'));
+const shop = require(path.join(root, 'utils/economy/seasonalShop.js'));
+const menu = require(path.join(root, 'utils/economy/buyMenu.js'));
+const views = require(path.join(root, 'utils/economy/engine/views.js'));
+const themes = require(path.join(root, 'utils/ui/themes.js'));
+const backgrounds = require(path.join(root, 'utils/ui/backgrounds.js'));
 const { getBalance } = require(path.join(root, 'utils/economy/shopManager.js'));
-const cfg = require(path.join(root, 'utils/games/config.js'));
-const games = require(path.join(root, 'utils/games/index.js'));
-const session = require(path.join(root, 'utils/games/session.js'));
+const notify = require(path.join(root, 'utils/economy/engine/notify.js'));
+const commandHandler = require(path.join(root, 'handlers/commandHandler.js'));
 
-cfg.channels = [];
-cfg.lobby.fullStartMs = 20; cfg.lobby.autoStartMs = 20;
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-let mid = 0;
-function mkChannel(id = 'sch' + (++mid)) {
-  const sent = [];
-  const mk = (c) => { const m = { id: 'm' + (++mid), ...(typeof c === 'string' ? { content: c } : c), edit: async (x) => { Object.assign(m, x); return m; }, react: async () => {}, reply: async () => {}, delete: async () => {} }; sent.push(m); return m; };
-  return { id, sent, send: async (c) => mk(c), isTextBased: () => true };
-}
-function mkMessage(ch, userId, content, perms = []) {
-  const replies = [];
-  return { author: { id: userId, bot: false, username: userId }, guild: { id: 'g' }, channel: ch,
-    member: { displayName: userId, permissions: { has: (p) => perms.includes(p) } },
-    content, replies, reply: async (c) => { replies.push(c); return { delete: async () => {} }; }, react: async () => {} };
-}
-const click = (userId, s, action) => games.handleInteraction({ customId: `pg:${s.id}:${action}`, user: { id: userId, username: userId }, member: { displayName: userId }, replies: [], reply: async () => {}, deferUpdate: async () => {} });
-async function setBal(id, v) { await dbx.run('INSERT INTO users (userId, balance) VALUES (?, ?) ON CONFLICT(userId) DO UPDATE SET balance = ?', [id, v, v]); }
-const bal = (id) => getBalance(id);
 let passed = 0, failed = 0;
-async function t(name, fn) { try { await fn(); passed++; console.log('  ✓', name); } catch (e) { failed++; console.log('  ✗', name, '\n     ', e.message); } }
-const texts = (ch) => ch.sent.map(m => (m.content || '') + ' ' + JSON.stringify(m.embeds || [])).join('\n');
-
-async function running(bet, players = ['A', 'B', 'C']) {
-  for (const s of [...session.sessions.values()]) await s.abort('reset').catch(() => {});
-  for (const p of players) await setBal(p, 10000);
-  const ch = mkChannel();
-  await games.handleMessage(mkMessage(ch, players[0], bet ? `.علم ${bet}` : '.علم'));
-  const s = session.sessionInChannel(ch.id); assert(s, 'lobby');
-  for (const p of players.slice(1)) await click(p, s, 'join');
-  s.checkAutoStart();
-  for (let i = 0; i < 100 && s.status !== 'running'; i++) await sleep(20);
-  assert.strictEqual(s.status, 'running'); return { ch, s };
-}
+const t = async (n, f) => { try { await f(); passed++; console.log('  ✓', n); } catch (e) { failed++; console.log('  ✗', n, '\n     ', e.message); } };
+const eq = (a, b, m) => { if (a !== b) throw new Error(`${m}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`); };
+const setBal = (id, v) => dbx.run('INSERT INTO users (userId,balance) VALUES (?,?) ON CONFLICT(userId) DO UPDATE SET balance=?', [id, v, v]);
+const s = settings.seasonalShop.list['autumn-2026'];
+const START = Date.parse('2026-11-07T00:00:00+03:00'), END = START + 5 * 86400000;
 
 (async () => {
-  await db.ready;
-  console.log('.توقف');
-  await t('only exact «.توقف» (and its aliases) is the stop command', () => {
-    for (const x of ['.توقف', '.ايقاف', '.إيقاف', '.وقف', '.ستوب', '.توقّف']) assert.strictEqual(games.isStopCommand(x), true, x);
-    for (const x of ['توقف', '.توقف الان', '.توقفوا', '.علم', 'قف', '', null, '. ']) assert.strictEqual(games.isStopCommand(x), false, String(x));
+  await db.ready; await shop.init();
+  await t('window: opens 7 Nov 2026 and closes by itself exactly 5 days later', () => {
+    eq(shop.phase(START - 1), 'upcoming', 'before'); eq(shop.phase(START), 'open', 'start');
+    eq(shop.phase(END - 1), 'open', 'last ms'); eq(shop.phase(END), 'closed', 'end');
+    eq(new Date(END).toISOString(), '2026-11-11T21:00:00.000Z', '12 Nov 00:00 Riyadh');
   });
-  await t('the host stops a RUNNING game: it ends at once, every stake comes back, no timers are left', async () => {
-    const { ch, s } = await running(100);
-    assert.strictEqual(await bal('B'), 9900, 'stake taken');
-    const m = mkMessage(ch, 'A', '.توقف'); assert.strictEqual(await games.handleMessage(m), true);
-    assert.strictEqual(s.status, 'done'); assert.strictEqual(session.sessionInChannel(ch.id), undefined);
-    for (const p of ['A', 'B', 'C']) assert.strictEqual(await bal(p), 10000, p + ' refunded');
-    const out = texts(ch); assert(/أوقفها <@A>/.test(out) && /تم إرجاع الرهانات/.test(out));
-    await sleep(60); assert.strictEqual(s.timers.size, 0, 'no stale timers');
-    // the channel is free again
-    await games.handleMessage(mkMessage(ch, 'B', '.علم')); assert(session.sessionInChannel(ch.id), 'a new game can start');
-    await session.sessionInChannel(ch.id).abort('x');
-  });
-  await t('another player cannot stop it: a short refusal, the game goes on, nobody is refunded', async () => {
-    const { ch, s } = await running(100);
-    const m = mkMessage(ch, 'B', '.توقف'); assert.strictEqual(await games.handleMessage(m), true);
-    assert.strictEqual(s.status, 'running'); assert(/فقط من بدأ اللعبة/.test(m.replies[0].content) && m.replies[0].content.includes('<@A>'));
-    assert.strictEqual(await bal('B'), 9900);
-    await s.abort('cleanup');
-  });
-  await t('a moderator (Manage Messages / Administrator) can stop any game', async () => {
-    for (const perm of ['ManageMessages', 'Administrator']) {
-      const { ch, s } = await running(50);
-      await games.handleMessage(mkMessage(ch, 'MOD', '.توقف', [perm]));
-      assert.strictEqual(s.status, 'done', perm); assert.strictEqual(await bal('A'), 10000);
+  await t('settings are valid, ids unique, every theme / background item exists', () => {
+    settings.validate();
+    const ids = s.items.map(i => i.id); eq(new Set(ids).size, ids.length, 'unique ids');
+    for (const i of s.items) {
+      if (i.kind === 'theme') eq(!!themes.THEMES.find(x => x.shop === i.id), true, 'theme for ' + i.id);
+      if (i.kind === 'background') eq(!!backgrounds.all().find(x => x.unlock && x.unlock.shop === i.id), true, 'background for ' + i.id);
+      if (!(i.price > 0 && Number.isInteger(i.price))) throw new Error('bad price ' + i.id);
     }
   });
-  await t('a LOBBY is cancelled by the host too, and the stake returns', async () => {
-    for (const s of [...session.sessions.values()]) await s.abort('reset');
-    await setBal('A', 10000); const ch = mkChannel();
-    await games.handleMessage(mkMessage(ch, 'A', '.علم 300'));
-    const s = session.sessionInChannel(ch.id); assert.strictEqual(await bal('A'), 9700);
-    await games.handleMessage(mkMessage(ch, 'A', '.توقف'));
-    assert.strictEqual(s.status, 'done'); assert.strictEqual(await bal('A'), 10000);
-    assert(/أوقفها <@A>/.test(texts(ch)));
+  await t('cannot buy before opening or after closing; nothing is charged', async () => {
+    await setBal('u', 50000);
+    let r = await shop.buy('u', 'title_leaf', START - 1000); eq(r.ok, false, 'before');
+    r = await shop.buy('u', 'title_leaf', END + 1000); eq(r.ok, false, 'after');
+    eq(await getBalance('u'), 50000, 'untouched');
   });
-  await t('no game in the channel → silence (nothing is sent, nothing starts)', async () => {
-    for (const s of [...session.sessions.values()]) await s.abort('reset');
-    const ch = mkChannel(); const m = mkMessage(ch, 'A', '.توقف');
-    assert.strictEqual(await games.handleMessage(m), true); assert.strictEqual(m.replies.length, 0); assert.strictEqual(ch.sent.length, 0);
-    assert.strictEqual(session.sessionInChannel(ch.id), undefined);
+  const realNow = Date.now; Date.now = () => START + 1000;      // the shop is open from here on
+  await t('buying a title: coins taken once, title saved, shows on the profile', async () => {
+    await setBal('b', 10000);
+    const r = await shop.buy('b', 'title_leaf'); eq(r.ok, true, JSON.stringify(r));
+    eq(await getBalance('b'), 6000, 'paid 4000');
+    const row = await dbx.get("SELECT * FROM titles WHERE userId = 'b'"); eq(row.titleId, 'ss_autumn-2026_title_leaf', 'title id');
+    const info = views.titleInfo(row.titleId); eq(info.name, 'Leaf Wanderer', 'title info'); eq(info.kind, 'event', 'kind');
   });
-  await t('stopping twice is harmless; a game in ANOTHER channel is untouched', async () => {
-    const a = await running(0); const other = mkChannel();
-    await setBal('Z', 10000); await games.handleMessage(mkMessage(other, 'Z', '.علم'));
-    const sz = session.sessionInChannel(other.id);
-    await Promise.all([games.handleMessage(mkMessage(a.ch, 'A', '.توقف')), games.handleMessage(mkMessage(a.ch, 'A', '.توقف'))]);
-    assert.strictEqual(a.s.status, 'done'); assert.strictEqual(sz.status, 'lobby', 'other channel untouched');
-    assert.strictEqual(texts(a.ch).split("أوقفها").length - 1, 1, 'announced once');
-    await sz.abort('x');
+  await t('buying twice, or double-clicking, charges only once', async () => {
+    await setBal('d', 100000);
+    const rs = await Promise.all([shop.buy('d', 'theme_amber'), shop.buy('d', 'theme_amber'), shop.buy('d', 'theme_amber')]);
+    eq(rs.filter(r => r.ok).length, 1, 'one success'); eq(await getBalance('d'), 94000, 'charged once');
   });
-
-  console.log(`\n${failed ? '❌' : '✅'}  ${passed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
+  await t('not enough coins → refused, nothing taken, nothing granted', async () => {
+    await setBal('p', 100);
+    const r = await shop.buy('p', 'title_sov'); eq(r.ok, false, 'refused'); eq(await getBalance('p'), 100, 'balance');
+    eq((await shop.ownedIds('p')).length, 0, 'nothing owned');
+  });
+  await t('owned colours / backgrounds unlock only for the buyer', async () => {
+    await setBal('c', 100000); await shop.buy('c', 'bg_leaves'); await shop.buy('c', 'theme_plum');
+    const owned = await shop.ownedIds('c');
+    const bg = backgrounds.all().find(b => b.unlock && b.unlock.shop === 'bg_leaves');
+    eq(backgrounds.isUnlocked(bg, { shopItems: owned }), true, 'owner'); eq(backgrounds.isUnlocked(bg, { shopItems: [] }), false, 'stranger');
+    eq(owned.includes('theme_plum'), true, 'theme owned');
+  });
+  await t('menus render: home, shop page, confirm page', async () => {
+    let h = await menu.home('b'); eq(h.components[0].components.length, 2, 'two buttons'); eq(h.components[0].components[1].data.disabled, false, 'seasonal enabled');
+    const page = await menu.shopPage('b'); if (!page.embeds[0].data.fields.length) throw new Error('no items listed');
+    const sel = page.components[0].components[0]; eq(sel.options.some(o => o.data.value === 'title_leaf'), false, 'owned item not offered again');
+    const cf = menu.confirmPage('b', s.items[1], 8000); eq(cf.components[0].components[0].data.disabled, false, 'can buy');
+  });
+  await t('/buy button flow: pick → confirm → buy, through handle()', async () => {
+    await setBal('f', 9000);
+    const mk = (customId, values) => { const it = { customId, values, user: { id: 'f' }, edits: [], deferUpdate: async () => {}, editReply: async (o) => { it.edits.push(o); }, replied: false, deferred: true }; return it; };
+    let it = mk('shop:ss:f'); eq(await menu.handle(it), true, 'handled');
+    it = mk('shop:pick:f', ['title_moon']); await menu.handle(it);
+    if (!/Harvest Moon/.test(JSON.stringify(it.edits[0].embeds[0].data))) throw new Error('confirm page missing');
+    it = mk('shop:buy:f:title_moon'); await menu.handle(it);
+    if (!/You bought/.test(it.edits[0].content)) throw new Error('not bought: ' + it.edits[0].content);
+    eq(await getBalance('f'), 1000, 'paid 8000');
+    const other = { customId: 'shop:buy:f:title_ember', user: { id: 'zzz' }, replies: [], reply: async (o) => { other.replies.push(o); } };
+    await menu.handle(other); if (!/not your menu/.test(other.replies[0].content)) throw new Error('someone else could press it');
+  });
+  Date.now = realNow;
+  await t('closes by itself: developer is told once (and DM fallback id is set)', async () => {
+    const sent = []; const real = notify.notifyDeveloper; notify.notifyDeveloper = async (_c, text) => { sent.push(text); return true; };
+    await shop.tick(null, START + 1000);                 // opened
+    await shop.tick(null, END + 1000); await shop.tick(null, END + 2000); await shop.tick(null, END + 3000);
+    notify.notifyDeveloper = real;
+    eq(sent.length, 2, 'one "opened" + one "closed"'); if (!/closed by itself/.test(sent[1])) throw new Error(sent[1]);
+    eq(settings.devUserId, '1498610562819690616', 'developer DM id');
+  });
+  await t('after closing the shop page says closed, owned things stay', async () => {
+    const realD = Date.now; Date.now = () => END + 5000;
+    const page = await menu.shopPage('b'); if (!/closed/i.test(page.content)) throw new Error('not closed: ' + page.content);
+    eq((await shop.ownedIds('b')).includes('title_leaf'), true, 'still owned');
+    const h = await menu.home('b'); eq(h.components[0].components[1].data.disabled, true, 'button disabled');
+    Date.now = realD;
+  });
+  await t('the event is retired: /event is hidden, /buyrole is gone, /buy is registered', () => {
+    eq(settings.events.current, null, 'no current event');
+    commandHandler.loadCommands();
+    const names = commandHandler.getCommands().map(c => c.name);
+    eq(names.includes('event'), false, '/event hidden'); eq(names.includes('buyrole'), false, '/buyrole removed'); eq(names.includes('buy'), true, '/buy there');
+  });
+  console.log(`\n${failed ? '❌' : '✅'}  ${passed} passed, ${failed} failed`); process.exit(failed ? 1 : 0);
 })();
