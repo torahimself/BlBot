@@ -175,7 +175,7 @@ const DATA = { balance: 1234567, chars: 183450, voiceMinutes: 5230, titles: [
     assert(out.files[0].name === 'preview.png'); assert.strictEqual(out.components.length, 5);
     const ids = out.components.flatMap(r => r.components.map(c => c.data.custom_id));
     for (const k of ['ui:th:C1', 'ui:ac:C1', 'ui:ch:C1', 'ui:b:about:C1', 'ui:b:color:C1', 'ui:b:shape:C1', 'ui:b:layout:C1', 'ui:b:reset:C1']) assert(ids.includes(k), k);
-    assert(out.components[1].components[0].options.length === themes.THEMES.length); assert(ids.includes('ui:bg:C1'));
+    assert(out.components[1].components[0].options.length === themes.THEMES.filter(t => !t.shop).length)   // seasonal-shop colours are hidden until the shop is open or they are owned; assert(ids.includes('ui:bg:C1'));
   });
   await t('only the owner can use a panel: anyone else gets a private refusal and nothing changes', async () => {
     await prefs.set('OWN', { theme: 'ocean' });
