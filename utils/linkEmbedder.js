@@ -95,19 +95,18 @@ async function getTikTokVideoUrl(url) {
   const tries = [
     { host: 'www.tikwm.com', hd: 0 },
     { host: 'tikwm.com',     hd: 0 },
-    { host: 'www.tikwm.com', hd: 1 },
   ];
   let lastErr = null;
   for (let i = 0; i < tries.length; i++) {
     const t = tries[i];
     try {
-      const data = await fetchJson(`https://${t.host}/api/?url=${encodeURIComponent(url)}&hd=${t.hd}`, {}, 25000);
+      const data = await fetchJson(`https://${t.host}/api/?url=${encodeURIComponent(url)}&hd=${t.hd}`, {}, 8000);
       const link = data?.data?.play || data?.data?.hdplay;
       if (data?.code === 0 && link) return link;
       lastErr = new Error(`tikwm: ${data?.msg || 'no video returned'}`);
     } catch (err) { lastErr = err; }
     console.warn(`[LinkEmbed] tiktok api try ${i + 1}/${tries.length} failed: ${lastErr.message}`);
-    await sleep(1500);
+    if (i < tries.length - 1) await sleep(1100);
   }
   throw lastErr || new Error('tikwm failed');
 }
@@ -202,15 +201,14 @@ async function buildVideoPost(url, authorId, platform) {
 
   try {
     if (platform === 'tiktok') {
+      // yt-dlp first (it took ~3s in your log); the tikwm API is only the backup and gets short timeouts
       try {
+        await runYtDlp(url, tmpFile, null);
+      } catch (ytErr) {
+        console.warn(`[LinkEmbed] tiktok yt-dlp failed (${String(ytErr.message).split('\n')[0].slice(0, 160)}) — trying tikwm API...`);
+        try { fs.unlinkSync(tmpFile); } catch {}
         const videoUrl = await getTikTokVideoUrl(url);
         await downloadFile(videoUrl, tmpFile);
-      } catch (apiErr) {
-        // the API route failed (timeout, rate limit, dead link) — try yt-dlp directly, no cookies needed for TikTok
-        console.warn(`[LinkEmbed] tiktok api route failed (${apiErr.message}) — trying yt-dlp...`);
-        try { fs.unlinkSync(tmpFile); } catch {}
-        try { await runYtDlp(url, tmpFile, null); }
-        catch (ytErr) { throw new Error(`${apiErr.message} | yt-dlp: ${String(ytErr.message).split('\n')[0].slice(0, 160)}`); }
       }
     } else if (platform === 'instagram') {
       await downloadInstagramReel(url, tmpFile);
