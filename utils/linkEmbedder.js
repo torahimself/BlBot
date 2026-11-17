@@ -31,11 +31,11 @@ function detectUrls(content) {
 }
 
 // ── HTTP GET → JSON (follows redirects) ───────────────────────────────────────
-function fetchJson(url, headers = {}) {
+function fetchJson(url, headers = {}, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https') ? https : http;
     const req = lib.get(url, {
-      timeout: 15000,
+      timeout: timeoutMs,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json, */*',
@@ -43,7 +43,7 @@ function fetchJson(url, headers = {}) {
       },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchJson(res.headers.location, headers).then(resolve).catch(reject);
+        return fetchJson(res.headers.location, headers, timeoutMs).then(resolve).catch(reject);
       }
       let data = '';
       res.setEncoding('utf8');
@@ -61,7 +61,7 @@ function downloadFile(url, destPath, referer = 'https://www.tiktok.com/') {
     const lib = url.startsWith('https') ? https : http;
     const file = fs.createWriteStream(destPath);
     const req = lib.get(url, {
-      timeout: 60000,
+      timeout: 90000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': referer,
@@ -87,15 +87,29 @@ function downloadFile(url, destPath, referer = 'https://www.tiktok.com/') {
   });
 }
 
-// ── TikTok: tikwm.com public API ─────────────────────────────────────────────
+// ── TikTok: tikwm.com public API (retried) + yt-dlp fallback ─────────────────
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function getTikTokVideoUrl(url) {
-  const data = await fetchJson(
-    `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`
-  );
-  if (data?.code === 0 && data?.data?.play) {
-    return data.data.play;
+  // tikwm is free and rate-limited (about 1 request/second) and sometimes slow, so: longer timeout, a few tries,
+  // alternate host, and HD only on the first try (HD is the slow one).
+  const tries = [
+    { host: 'www.tikwm.com', hd: 0 },
+    { host: 'tikwm.com',     hd: 0 },
+    { host: 'www.tikwm.com', hd: 1 },
+  ];
+  let lastErr = null;
+  for (let i = 0; i < tries.length; i++) {
+    const t = tries[i];
+    try {
+      const data = await fetchJson(`https://${t.host}/api/?url=${encodeURIComponent(url)}&hd=${t.hd}`, {}, 25000);
+      const link = data?.data?.play || data?.data?.hdplay;
+      if (data?.code === 0 && link) return link;
+      lastErr = new Error(`tikwm: ${data?.msg || 'no video returned'}`);
+    } catch (err) { lastErr = err; }
+    console.warn(`[LinkEmbed] tiktok api try ${i + 1}/${tries.length} failed: ${lastErr.message}`);
+    await sleep(1500);
   }
-  throw new Error(`tikwm: ${data?.msg || 'no video returned'}`);
+  throw lastErr || new Error('tikwm failed');
 }
 
 // ── Instagram Reels: yt-dlp via Python (pip install yt-dlp runs on every boot) ─
@@ -125,7 +139,7 @@ function runYtDlp(url, outputPath, cookiesFile) {
       '-m', 'yt_dlp',
       url,
       '-o', outputPath,
-      '--cookies', cookiesFile,
+      ...(cookiesFile ? ['--cookies', cookiesFile] : []),
       '--no-playlist',
       '-f', 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
@@ -188,8 +202,16 @@ async function buildVideoPost(url, authorId, platform) {
 
   try {
     if (platform === 'tiktok') {
-      const videoUrl = await getTikTokVideoUrl(url);
-      await downloadFile(videoUrl, tmpFile);
+      try {
+        const videoUrl = await getTikTokVideoUrl(url);
+        await downloadFile(videoUrl, tmpFile);
+      } catch (apiErr) {
+        // the API route failed (timeout, rate limit, dead link) — try yt-dlp directly, no cookies needed for TikTok
+        console.warn(`[LinkEmbed] tiktok api route failed (${apiErr.message}) — trying yt-dlp...`);
+        try { fs.unlinkSync(tmpFile); } catch {}
+        try { await runYtDlp(url, tmpFile, null); }
+        catch (ytErr) { throw new Error(`${apiErr.message} | yt-dlp: ${String(ytErr.message).split('\n')[0].slice(0, 160)}`); }
+      }
     } else if (platform === 'instagram') {
       await downloadInstagramReel(url, tmpFile);
     }
