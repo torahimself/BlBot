@@ -99,7 +99,7 @@ module.exports = {
       console.error('❌ Error starting economy engine:', error);
     }
 
-    // Twitter / X post tracker — @Emmaoinkk → channel 1437107048348123136
+    // Twitter / X post tracker — accounts are listed in utils/twitterTracker.js → channel 1437107048348123136
     try {
       startTracker(client);
     } catch (error) {
