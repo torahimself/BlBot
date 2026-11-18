@@ -11,21 +11,21 @@ const stats = require('./stats.js');
 
 // kind: 'wins' (wins in one game) · 'totalWins' · 'totalPlays' · 'special' (awarded by the game itself)
 const BADGES = [
-  { key: 'first_win',   name: 'First Blood',      emoji: '🏅', kind: 'totalWins',  n: 1,   hint: 'Win your first party game' },
-  { key: 'wins_10',     name: 'Rising Player',    emoji: '⭐', kind: 'totalWins',  n: 10,  hint: 'Win 10 party games' },
-  { key: 'wins_50',     name: 'Arena Regular',    emoji: '🏟️', kind: 'totalWins',  n: 50,  hint: 'Win 50 party games' },
-  { key: 'wins_150',    name: 'Server Champion',  emoji: '🏆', kind: 'totalWins',  n: 150, hint: 'Win 150 party games' },
-  { key: 'plays_25',    name: 'Party Animal',     emoji: '🎉', kind: 'totalPlays', n: 25,  hint: 'Play 25 party games' },
-  { key: 'plays_100',   name: 'Game Night Legend', emoji: '🎮', kind: 'totalPlays', n: 100, hint: 'Play 100 party games' },
-  { key: 'guess_10',    name: 'Flag Hunter',      emoji: '🚩', kind: 'wins', game: 'guess',      n: 10, hint: 'Win 10 flag / capital games' },
-  { key: 'geo_10',      name: 'Street Scout',     emoji: '🧭', kind: 'wins', game: 'geo',        n: 10, hint: 'Win 10 geo games' },
-  { key: 'cat_10',      name: 'Word Wizard',      emoji: '🔤', kind: 'wins', game: 'categories', n: 10, hint: 'Win 10 Insan-Haywan games' },
-  { key: 'roulette_10', name: 'Wheel Survivor',   emoji: '🎡', kind: 'wins', game: 'roulette',   n: 10, hint: 'Win 10 roulette games' },
-  { key: 'mafia_10',    name: 'Mafia Mastermind', emoji: '🎭', kind: 'wins', game: 'mafia',      n: 10, hint: 'Win 10 mafia games' },
-  { key: 'typing_10',   name: 'Speed Demon',      emoji: '⚡', kind: 'wins', game: 'typing',     n: 10, hint: 'Win 10 typing races' },
-  { key: 'chain_10',    name: 'Chain Master',     emoji: '🔗', kind: 'wins', game: 'chain',      n: 10, hint: 'Win 10 word chains' },
-  { key: 'math_10',     name: 'Human Calculator', emoji: '🧮', kind: 'wins', game: 'math',       n: 10, hint: 'Win 10 math races' },
-  { key: 'pinpoint',    name: 'Pinpoint',         emoji: '🎯', kind: 'special', hint: 'Name the exact country in a geo round' },
+  { key: 'first_win',   name: 'First Blood',      emoji: 'ico:g_medal', kind: 'totalWins',  n: 1,   hint: 'Win your first party game' },
+  { key: 'wins_10',     name: 'Rising Player',    emoji: 'ico:g_star', kind: 'totalWins',  n: 10,  hint: 'Win 10 party games' },
+  { key: 'wins_50',     name: 'Arena Regular',    emoji: 'ico:g_arena', kind: 'totalWins',  n: 50,  hint: 'Win 50 party games' },
+  { key: 'wins_150',    name: 'Server Champion',  emoji: 'ico:g_trophy', kind: 'totalWins',  n: 150, hint: 'Win 150 party games' },
+  { key: 'plays_25',    name: 'Party Animal',     emoji: 'ico:g_party', kind: 'totalPlays', n: 25,  hint: 'Play 25 party games' },
+  { key: 'plays_100',   name: 'Game Night Legend', emoji: 'ico:g_pad', kind: 'totalPlays', n: 100, hint: 'Play 100 party games' },
+  { key: 'guess_10',    name: 'Flag Hunter',      emoji: 'ico:g_flag', kind: 'wins', game: 'guess',      n: 10, hint: 'Win 10 flag / capital games' },
+  { key: 'geo_10',      name: 'Street Scout',     emoji: 'ico:g_compass', kind: 'wins', game: 'geo',        n: 10, hint: 'Win 10 geo games' },
+  { key: 'cat_10',      name: 'Word Wizard',      emoji: 'ico:g_quill', kind: 'wins', game: 'categories', n: 10, hint: 'Win 10 Insan-Haywan games' },
+  { key: 'roulette_10', name: 'Wheel Survivor',   emoji: 'ico:g_wheel', kind: 'wins', game: 'roulette',   n: 10, hint: 'Win 10 roulette games' },
+  { key: 'mafia_10',    name: 'Mafia Mastermind', emoji: 'ico:g_masks', kind: 'wins', game: 'mafia',      n: 10, hint: 'Win 10 mafia games' },
+  { key: 'typing_10',   name: 'Speed Demon',      emoji: 'ico:g_bolt', kind: 'wins', game: 'typing',     n: 10, hint: 'Win 10 typing races' },
+  { key: 'chain_10',    name: 'Chain Master',     emoji: 'ico:g_chain', kind: 'wins', game: 'chain',      n: 10, hint: 'Win 10 word chains' },
+  { key: 'math_10',     name: 'Human Calculator', emoji: 'ico:g_beads', kind: 'wins', game: 'math',       n: 10, hint: 'Win 10 math races' },
+  { key: 'pinpoint',    name: 'Pinpoint',         emoji: 'ico:g_target', kind: 'special', hint: 'Name the exact country in a geo round' },
 ];
 
 const idOf = (key) => `gb_${key}`;

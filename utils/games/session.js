@@ -19,6 +19,8 @@ const stakes = require('../economy/stakes.js');
 const gameManager = require('../economy/gameManager.js');
 const gameStats = require('./stats.js');
 const badges = require('./badges.js');
+const icons = require('../ui/icons.js');
+const em = (e) => { const t = icons.text(e); return t ? t + ' ' : ''; };   // BlBot's own drawn icons only show on picture cards
 
 const sessions = new Map();     // id → Session
 const byChannel = new Map();    // channelId → id
@@ -72,7 +74,8 @@ class Session {
       .setTitle(`${d.emoji} ${d.title}`)
       .setDescription(
         `${d.blurb}\n\n` +
-        `${this.bet > 0 ? `💰 **الرهان:** ${this.bet} عملة لكل لاعب` : '🆓 **لعب مجاني** — بدون رهان'}\n` +
+        `${this.bet > 0 ? `💰 **الرهان:** ${this.bet} عملة لكل لاعب — يُسحب عند الانضمام · الجائزة الحالية: **${this.bet * this.players.size}**` : '🆓 **لعب مجاني** — بدون رهان'}\n` +
+        `${this.bet > 0 && this.players.size < 2 ? '⚠️ الرهان يحتاج لاعبًا ثانيًا على الأقل — إن لعبت وحدك يُرجع لك.\n' : ''}` +
         `👥 **اللاعبون (${this.players.size}/${d.max}):**\n${list}\n\n${left}`
       )
       .setFooter({ text: `المضيف: ${this.name(this.hostId)}` });
@@ -160,7 +163,7 @@ class Session {
     try {
       if (await badges.grant(userId, key)) {
         const b = badges.info(badges.idOf(key));
-        if (b) this.badgeNotes.push(`${b.emoji} **${b.name}**  ← ${this.mention(userId)}`);
+        if (b) this.badgeNotes.push(`${em(b.emoji)}**${b.name}**  ← ${this.mention(userId)}`);
       }
     } catch (e) { console.error('[Party] badge failed:', e); }
   }
@@ -258,7 +261,7 @@ class Session {
       const lines = [];
       for (const id of [...new Set([...(active || ids), ...winners])]) {
         if (!ids.includes(id)) continue;
-        for (const b of await badges.check(id)) lines.push(`${b.emoji} **${b.name}**  ← ${this.mention(id)}`);
+        for (const b of await badges.check(id)) lines.push(`${em(b.emoji)}**${b.name}**  ← ${this.mention(id)}`);
       }
       for (const n of this.badgeNotes) lines.push(n);
       if (lines.length) noteText += `\n🏅 **وسام جديد!**\n${lines.join('\n')}`;

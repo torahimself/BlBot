@@ -44,13 +44,32 @@ function parseTrigger(content) {
   if (type === 'categories') while (rest.length && ['حيوان', 'نبات', 'جماد', 'بلاد'].includes(fold(rest[0]))) rest.shift();
   let bet = 0;
   if (rest.length) {
-    if (!/^\d+$/.test(rest[0])) return { type, bet: 0 };
-    bet = parseInt(rest[0], 10);
-    if (bet < cfg.trigger.minBet) {
+    const n = parseAmount(rest[0]);
+    if (n === null) return { type, bet: 0 };                         // a plain word after the trigger: just a free game
+    if (!(n >= cfg.trigger.minBet)) {
       return { type, error: `❌ أقل رهان هو **${cfg.trigger.minBet}** عملة (أو اتركه فارغًا للعب المجاني).` };
     }
+    if (!Number.isSafeInteger(n)) return { type, error: '❌ هذا الرقم كبير جدًا.' };
+    bet = n;
   }
   return { type, bet };
+}
+
+/**
+ * "100" · "١٠٠" (Arabic-Indic, what Arabic keyboards type) · "۱۰۰" · "1,000" · "2.5k" · "3ك" → a number.
+ * null = not a number at all (so a stray word never turns a free game into an error).
+ */
+function parseAmount(raw) {
+  let t = String(raw || '').trim()
+    .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660))        // ٠-٩
+    .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6f0))        // ۰-۹ (Persian digits)
+    .replace(/[,،_٬]/g, '');                                          // thousands separators
+  let mult = 1;
+  if (/[kKكک]$/.test(t)) { mult = 1000; t = t.slice(0, -1); }
+  else if (/^\d+(\.\d+)?(m|M|م)$/.test(t)) { mult = 1000000; t = t.slice(0, -1); }
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const n = Math.floor(parseFloat(t) * mult);
+  return Number.isFinite(n) ? n : null;
 }
 
 const STOP_WORDS = new Set((cfg.trigger.stopWords || []).map(fold));
@@ -239,6 +258,10 @@ async function handleInteraction(interaction) {
         if (!r.ok) return reply(`❌ ${r.error}`);
         s.checkAutoStart();
         await interaction.deferUpdate().catch(() => {});
+        if (s.bet > 0 && typeof interaction.followUp === 'function') {       // proof that the bet was taken
+          const bal = await require('../economy/shopManager.js').getBalance(uid).catch(() => null);
+          interaction.followUp({ content: `💰 تم سحب **${s.bet}** عملة كرهان${bal === null ? '' : ` — رصيدك الآن **${bal}**`}. الفائز يأخذ الجائزة كاملة.`, flags: 64 }).catch(() => {});
+        }
         return s.refreshLobby();
       }
       if (action === 'leave') {
@@ -268,4 +291,5 @@ async function handleInteraction(interaction) {
 // Hand back stakes of games interrupted by a restart (once, after the DB is ready).
 dbx.get('SELECT 1').then(() => session.init()).catch(() => {});
 
-module.exports = { parseTrigger, isStopCommand, isHelpCommand, helpEmbed, handleMessage, handleInteraction };
+module.exports = {
+  parseAmount, parseTrigger, isStopCommand, isHelpCommand, helpEmbed, handleMessage, handleInteraction };
