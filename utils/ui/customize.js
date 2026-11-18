@@ -16,6 +16,9 @@ const profileCard = require('./profileCard');
 const views = require('../economy/engine/views');
 const backgrounds = require('./backgrounds');
 const seasonal = require('../economy/seasonalShop');
+const icons = require('./icons');
+// .setEmoji() that quietly skips BlBot's own pictures when they are not uploaded as Discord emoji
+const withEmoji = (opt, e) => { const c = icons.component(e); return c ? opt.setEmoji(c) : opt; };
 
 const EPHEMERAL = 64;
 
@@ -53,7 +56,7 @@ async function panel(userId, interaction) {
   const themeMenu = new StringSelectMenuBuilder().setCustomId(`ui:th:${userId}`).setPlaceholder(`Theme: ${theme.label}`)
     .addOptions(themeOpts.map(t => {
       const locked = t.shop && !owned.includes(t.shop);
-      const o = new StringSelectMenuOptionBuilder().setLabel(t.label).setValue(t.id).setEmoji(locked ? '🔒' : t.emoji).setDefault(t.id === prefs.theme);
+      const o = withEmoji(new StringSelectMenuOptionBuilder().setLabel(t.label).setValue(t.id).setDefault(t.id === prefs.theme), locked ? '🔒' : t.emoji);
       return locked ? o.setDescription('Seasonal shop — buy it with /buy') : o;
     }));
 
@@ -66,7 +69,7 @@ async function panel(userId, interaction) {
 
   // Titles shown next to the name: pick up to 3 (none picked = the best three automatically).
   const mine = prefs.chips || [];
-  const chipOpts = m.titles.slice(0, 25).map(t => new StringSelectMenuOptionBuilder().setLabel(t.name.slice(0, 100)).setDescription(t.sub.slice(0, 100)).setValue(t.id).setEmoji(t.emoji).setDefault(mine.includes(t.id)));
+  const chipOpts = m.titles.slice(0, 25).map(t => withEmoji(new StringSelectMenuOptionBuilder().setLabel(t.name.slice(0, 100)).setDescription(t.sub.slice(0, 100)).setValue(t.id).setDefault(mine.includes(t.id)), t.emoji));
   const chipMenu = new StringSelectMenuBuilder().setCustomId(`ui:ch:${userId}`)
     .setPlaceholder(m.titles.length ? (mine.length ? `Titles by your name (${mine.length} chosen)` : 'Titles by your name: automatic (best 3)') : 'Titles by your name — earn a title first')
     .setMinValues(0).setMaxValues(Math.max(1, Math.min(3, chipOpts.length)));
@@ -77,7 +80,7 @@ async function panel(userId, interaction) {
   const bgOpts = [new StringSelectMenuOptionBuilder().setLabel('Theme default').setValue('theme').setEmoji('🎨').setDescription('The plain theme background').setDefault(!prefs.bg)];
   for (const b of backgrounds.all().filter(b => !(b.unlock && b.unlock.shop) || owned.includes(b.unlock.shop) || shopOpen)) {
     const open = backgrounds.isUnlocked(b, ctx);
-    bgOpts.push(new StringSelectMenuOptionBuilder().setLabel(b.label.slice(0, 100)).setValue(b.id).setEmoji(open ? b.emoji : '🔒')
+    bgOpts.push(withEmoji(new StringSelectMenuOptionBuilder().setLabel(b.label.slice(0, 100)).setValue(b.id), open ? b.emoji : '🔒')
       .setDescription((open ? (b.unlock ? 'Unlocked · ' : '') + backgrounds.describe(b) : 'Unlock: ' + backgrounds.describe(b)).slice(0, 100)).setDefault(b.id === prefs.bg));
   }
   const curBg = prefs.bg && backgrounds.byId(prefs.bg);

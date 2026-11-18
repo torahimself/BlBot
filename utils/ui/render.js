@@ -36,6 +36,14 @@ const available = () => !!canvas();
 const emojiCache = new Map();
 const cpsOf = (e) => [...String(e)].filter(c => c.codePointAt(0) !== 0xfe0f).map(c => c.codePointAt(0).toString(16)).join('-');
 async function emoji(e) {
+  if (require('./icons.js').isIcon(e)) {                    // BlBot's own drawn icons: "ico:<name>"
+    const nm = require('./icons.js').nameOf(e), ck = 'ico:' + nm;
+    if (emojiCache.has(ck)) return emojiCache.get(ck);
+    let c = null;
+    if (canvas() && require('./icons.js').has(e)) { const made = newCanvas(128, 128); require('./icons.js').paint(made.g, nm, 0, 0, 128); c = made.c; }
+    emojiCache.set(ck, c);
+    return c;
+  }
   const key = cpsOf(e);
   if (!key) return null;
   if (emojiCache.has(key)) return emojiCache.get(key);
@@ -218,6 +226,24 @@ function background(g, W, H, theme, accent) {
     case 'web':    // cobweb corner (Halloween)
       for (let a = 0; a <= 6; a++) { const ang = (a / 6) * (Math.PI / 2); g.beginPath(); g.moveTo(W, 0); g.lineTo(W - Math.cos(ang) * 420, Math.sin(ang) * 420); g.stroke(); }
       for (let r = 70; r <= 420; r += 70) { g.beginPath(); for (let a = 0; a <= 6; a++) { const ang = (a / 6) * (Math.PI / 2); const px = W - Math.cos(ang) * r * (a % 2 ? 0.93 : 1), py = Math.sin(ang) * r * (a % 2 ? 0.93 : 1); if (a) g.lineTo(px, py); else g.moveTo(px, py); } g.stroke(); }
+      break;
+    case 'scales': {            // overlapping fish / dragon scales
+      const r = 30;
+      for (let row = 0; row * r * 0.55 < H + r; row++) for (let col = -1; col * r * 2 < W + r * 2; col++) {
+        const cx = col * r * 2 + (row % 2 ? r : 0), cy = row * r * 0.55;
+        g.beginPath(); g.arc(cx, cy, r, 0, Math.PI); g.stroke();
+      }
+      break;
+    }
+    case 'shards':              // cracked glass: lines radiating from a point, joined by jagged rings
+      for (let a = 0; a < 13; a++) { const ang = Math.PI * 2 * a / 13 + rnd() * 0.2; g.beginPath(); g.moveTo(W * 0.78, H * 0.3); g.lineTo(W * 0.78 + Math.cos(ang) * 900, H * 0.3 + Math.sin(ang) * 900); g.stroke(); }
+      for (let r = 60; r < 700; r += 80 + rnd() * 30) { g.beginPath(); for (let a = 0; a <= 13; a++) { const ang = Math.PI * 2 * a / 13, rr = r * (0.9 + rnd() * 0.2); const px = W * 0.78 + Math.cos(ang) * rr, py = H * 0.3 + Math.sin(ang) * rr; if (a) g.lineTo(px, py); else g.moveTo(px, py); } g.stroke(); }
+      break;
+    case 'rings':               // ripples from a few drops
+      for (const [cx, cy] of [[0.2, 0.3], [0.7, 0.75], [0.9, 0.2]]) for (let r = 24; r < 360; r += 30) { g.beginPath(); g.arc(W * cx, H * cy, r, 0, Math.PI * 2); g.stroke(); }
+      break;
+    case 'topo':                // contour-map lines
+      for (let k = 0; k < 16; k++) { g.beginPath(); for (let x = 0; x <= W; x += 10) { const y = H * (0.05 + k * 0.065) + Math.sin(x / 90 + k * 0.7) * 18 + Math.sin(x / 33 + k) * 6; if (x) g.lineTo(x, y); else g.moveTo(x, y); } g.stroke(); }
       break;
     case 'diag':
       for (let x = -H; x < W; x += 36) { g.beginPath(); g.moveTo(x, H); g.lineTo(x + H, 0); g.stroke(); }

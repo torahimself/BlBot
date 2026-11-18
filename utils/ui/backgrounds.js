@@ -88,24 +88,65 @@ const DRAWN = [
 ];
 
 DRAWN.push(
-  { id: 'leaves', label: 'Falling Leaves', emoji: '🍃', unlock: { shop: 'bg_leaves' }, draw(g, W, H, rnd) {
-    base(g, W, H, '#1c0d05', '#5a2a0c', 1.2);
-    glow(g, W * 0.25, H * 0.15, W * 0.5, '#ffb347', 0.22);
-    const cols = ['#ff8a1f', '#e8541c', '#ffc23d', '#b8330f', '#d9772b'];
-    for (let i = 0; i < 70; i++) {
-      const x = rnd() * W, y = rnd() * H, s = 9 + rnd() * 16, a = rnd() * 6.28;
-      g.save(); g.translate(x, y); g.rotate(a); g.fillStyle = rgba(cols[Math.floor(rnd() * cols.length)], 0.3 + rnd() * 0.55);
-      g.beginPath(); g.moveTo(0, -s); g.quadraticCurveTo(s * 0.9, -s * 0.2, 0, s); g.quadraticCurveTo(-s * 0.9, -s * 0.2, 0, -s); g.fill();
-      g.strokeStyle = 'rgba(40,12,2,0.35)'; g.lineWidth = 1; g.beginPath(); g.moveTo(0, -s); g.lineTo(0, s); g.stroke(); g.restore();
+  { id: 'leaves', label: 'Leaf Skeletons', emoji: 'ico:s_veins', unlock: { shop: 'bg_leaves' }, draw(g, W, H, rnd) {
+    base(g, W, H, '#03100f', '#0b3a37', 1.1);
+    glow(g, W * 0.2, H * 0.8, W * 0.5, '#14b8a6', 0.16); glow(g, W * 0.85, H * 0.1, W * 0.4, '#5eead4', 0.12);
+    g.lineCap = 'round';
+    for (let n = 0; n < 7; n++) {                                     // big leaves reduced to their vein networks
+      const cx = rnd() * W, cy = rnd() * H, len = 190 + rnd() * 210, rot = rnd() * 6.28, a = 0.4 + rnd() * 0.35;
+      g.save(); g.translate(cx, cy); g.rotate(rot); g.shadowColor = '#5eead4'; g.shadowBlur = 14; g.strokeStyle = rgba('#7ff5e0', a);
+      g.lineWidth = 4; g.beginPath(); g.moveTo(0, -len / 2); g.lineTo(0, len / 2); g.stroke();
+      g.lineWidth = 2.2;
+      for (let k = 1; k < 11; k++) {
+        const y = -len / 2 + (k / 11) * len, w = Math.sin((k / 11) * Math.PI) * len * 0.34;
+        for (const sd of [-1, 1]) { g.beginPath(); g.moveTo(0, y); g.quadraticCurveTo(sd * w * 0.5, y - 10, sd * w, y - 26); g.stroke();
+          for (let t = 1; t < 4; t++) { const bx = sd * w * (t / 4), by = y - 6 - t * 5; g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + sd * 12, by - 14); g.stroke(); } }
+      }
+      g.beginPath(); g.moveTo(0, -len / 2); g.quadraticCurveTo(len * 0.36, -len * 0.1, 0, len / 2); g.quadraticCurveTo(-len * 0.36, -len * 0.1, 0, -len / 2); g.lineWidth = 1.2; g.stroke();
+      g.restore();
     }
+    dots(g, W, H, rnd, 40, '#a7fff0', 0.45, 0.8, 2.4);
   } },
-  { id: 'harvest', label: 'Harvest Moon Night', emoji: '🌕', unlock: { shop: 'bg_harvest' }, draw(g, W, H, rnd) {
-    base(g, W, H, '#0a0712', '#3b1d0a', 1.5);
-    glow(g, W * 0.72, H * 0.3, W * 0.5, '#ffb347', 0.45);
-    g.fillStyle = '#ffe3a6'; g.beginPath(); g.arc(W * 0.72, H * 0.3, 92, 0, 7); g.fill();
-    g.fillStyle = 'rgba(190,140,70,0.35)'; for (let k = 0; k < 6; k++) { g.beginPath(); g.arc(W * 0.72 + (rnd() - 0.5) * 120, H * 0.3 + (rnd() - 0.5) * 110, 7 + rnd() * 16, 0, 7); g.fill(); }
-    dots(g, W, H, rnd, 50, '#ffe9c4', 0.5, 0.6, 1.8);
-    for (let layer = 0; layer < 2; layer++) { g.fillStyle = layer ? '#0b0504' : '#1c0e05'; g.beginPath(); g.moveTo(0, H); for (let x = 0; x <= W; x += 20) g.lineTo(x, H * (0.78 + layer * 0.08) + Math.sin(x / 90 + layer * 2) * 16); g.lineTo(W, H); g.closePath(); g.fill(); }
+  { id: 'harvest', label: 'Black Sun Harvest', emoji: 'ico:s_eclipse', unlock: { shop: 'bg_harvest' }, draw(g, W, H, rnd) {
+    base(g, W, H, '#1a0603', '#7a2a07', 1.5);
+    const sx = W * 0.68, sy = H * 0.34;
+    glow(g, sx, sy, W * 0.5, '#ff9a2e', 0.5); glow(g, sx, sy, W * 0.22, '#ffd36b', 0.55);
+    g.save(); g.translate(sx, sy); g.strokeStyle = 'rgba(255,200,110,0.55)'; g.lineCap = 'round';
+    for (let i = 0; i < 48; i++) { const a = Math.PI * 2 * i / 48, r0 = 96, r1 = 120 + (i % 3 === 0 ? 70 : i % 2 ? 22 : 40); g.lineWidth = i % 3 === 0 ? 3 : 1.6; g.beginPath(); g.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); g.lineTo(Math.cos(a) * r1, Math.sin(a) * r1); g.stroke(); }
+    g.restore();
+    g.fillStyle = '#050206'; g.beginPath(); g.arc(sx, sy, 90, 0, 7); g.fill();
+    g.strokeStyle = 'rgba(255,225,150,0.9)'; g.lineWidth = 3; g.beginPath(); g.arc(sx, sy, 92, -0.6, 1.2); g.stroke();
+    // wheat: rows of curved stalks in silhouette
+    for (let row = 0; row < 3; row++) {
+      g.strokeStyle = row === 0 ? '#2a0e04' : row === 1 ? '#1a0903' : '#0a0402'; g.fillStyle = g.strokeStyle; g.lineWidth = 2 + row;
+      const yb = H * (0.8 + row * 0.1), step = 22 - row * 4;
+      for (let x = -10; x < W + 20; x += step) {
+        const h = 70 + rnd() * 70 + row * 18, sway = (rnd() - 0.5) * 40, tx = x + sway, ty = yb - h;
+        g.beginPath(); g.moveTo(x, H + 10); g.quadraticCurveTo(x + sway * 0.2, yb - h * 0.5, tx, ty); g.stroke();
+        for (let k = 0; k < 5; k++) { g.beginPath(); g.ellipse(tx + (k % 2 ? 4 : -4), ty + k * 7, 3, 7, (k % 2 ? 0.5 : -0.5), 0, 7); g.fill(); }
+      }
+    }
+    dots(g, W, H, rnd, 45, '#ffb347', 0.6, 0.8, 2.6);
+  } },
+  { id: 'stained', label: 'Stained Glass', emoji: 'ico:s_glass', unlock: { level: 12 }, draw(g, W, H, rnd) {
+    base(g, W, H, '#0b0716', '#1a1030', 0.8);
+    const pts = []; for (let i = 0; i < 46; i++) pts.push([rnd() * W, rnd() * H]);
+    const cols = ['#7c3aed', '#db2777', '#0ea5e9', '#f59e0b', '#14b8a6', '#6366f1', '#ef4444'];
+    // each pixel block takes the colour of its nearest point: a stained-glass (Voronoi) window
+    const step = 2; const owner = (x, y) => { let b = 0, bd = 1e9; for (let i = 0; i < pts.length; i++) { const d = (pts[i][0] - x) ** 2 + (pts[i][1] - y) ** 2; if (d < bd) { bd = d; b = i; } } return b; };
+    for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) { const o = owner(x, y), c = cols[o % cols.length]; g.fillStyle = rgba(c, 0.18 + ((o * 37) % 10) / 55); g.fillRect(x, y, step, step); }
+    g.fillStyle = 'rgba(10,5,20,0.92)';
+    for (let y = step; y < H; y += step) for (let x = step; x < W; x += step) { const o = owner(x, y); if (owner(x - step, y) !== o || owner(x, y - step) !== o) g.fillRect(x - 1, y - 1, 3, 3); }
+    glow(g, W * 0.75, H * 0.15, W * 0.4, '#ffffff', 0.12);
+  } },
+  { id: 'contour', label: 'Contour Map', emoji: 'ico:s_topo', unlock: null, draw(g, W, H, rnd) {
+    base(g, W, H, '#0c0a06', '#2a1f0b', 0.9);
+    for (let k = 0; k < 26; k++) {
+      g.strokeStyle = rgba(k % 5 === 0 ? '#ffd98a' : '#d9b05a', k % 5 === 0 ? 0.7 : 0.38); g.lineWidth = k % 5 === 0 ? 3 : 1.6; g.beginPath();
+      for (let x = 0; x <= W; x += 8) { const y = H * (0.02 + k * 0.04) + Math.sin(x / 120 + k * 0.5) * 26 + Math.sin(x / 41 + k * 1.3) * 7 + Math.cos(x / 260 + k) * 22; if (x) g.lineTo(x, y); else g.moveTo(x, y); }
+      g.stroke();
+    }
+    glow(g, W * 0.3, H * 0.7, W * 0.4, '#ffb347', 0.12);
   } },
 );
 
