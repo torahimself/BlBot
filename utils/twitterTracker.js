@@ -21,6 +21,10 @@ const ACCOUNTS = [
     username:    'Emmaoinkk',
     displayName: 'Emma 🐷',
   },
+  {
+    username:    'vxard9',
+    displayName: 'Vxard',
+  },
 ];
 
 // Base interval per account. Each account is polled on its OWN independent
