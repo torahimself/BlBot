@@ -36,6 +36,7 @@ const available = () => !!canvas();
 const emojiCache = new Map();
 const cpsOf = (e) => [...String(e)].filter(c => c.codePointAt(0) !== 0xfe0f).map(c => c.codePointAt(0).toString(16)).join('-');
 async function emoji(e) {
+  e = require('./icons.js').alias(e);                        // stock emoji we have our own icon for
   if (require('./icons.js').isIcon(e)) {                    // BlBot's own drawn icons: "ico:<name>"
     const nm = require('./icons.js').nameOf(e), ck = 'ico:' + nm;
     if (emojiCache.has(ck)) return emojiCache.get(ck);

@@ -75,9 +75,46 @@ const ICONS = {
   x_dagger:  ['dagger',   '#c4cfe2', '#be123c', 'gold'],
   x_eye:     ['eye',      '#a855f7', '#4c1d95', 'gold'],
   x_book:    ['book',     '#7c3aed', '#4c1d95', 'gold'],
+  // everyday icons used on the profile / inventory cards (replace stock emoji)
+  x_coins:   ['coin',     '#e08a4e', '#2a8c80', 'bronze'],
+  x_hourglass:['hourglass','#ffd98a', '#b45309', 'bronze'],
+  x_scroll:  ['book',     '#e5d3a3', '#92400e', 'bronze'],
+  x_headset: ['headset',  '#4aa8ff', '#1e3a8a', 'bronze'],
+  x_mic:     ['mic',      '#c4cfe2', '#4b5563', 'bronze'],
+  x_keys:    ['keyboard', '#c4cfe2', '#4b5563', 'bronze'],
+  x_calendar:['calendar', '#fff', '#ef4444', 'bronze'],
+  x_pumpkin: ['pumpkin',  '#ff8a1f', '#c2410c', 'bronze'],
+  x_shield:  ['shield',   '#4aa8ff', '#1e3a8a', 'bronze'],
+  x_web:     ['web',      '#f3e8d2', '#3b2a4f', 'bronze'],
+  x_couch:   ['couch',    '#34d399', '#065f46', 'bronze'],
+  x_radio:   ['radio',    '#c4cfe2', '#4b5563', 'bronze'],
+  x_candy:   ['candy',    '#ff5fa2', '#38bdf8', 'bronze'],
+  x_dice:    ['dice',     '#ef4444', '#fff', 'bronze'],
+  x_crown:   ['crown',    '#fbbf24', '#7c2d12', 'bronze'],
+  x_medal1:  ['medal',    '#ef4444', '#2563eb', 'bronze'],
+  x_medal2:  ['medal_s',  '#ef4444', '#2563eb', 'bronze'],
+  x_medal3:  ['medal_b',  '#ef4444', '#2563eb', 'bronze'],
+  x_gem_b:   ['gem',      '#4aa8ff', '#1e3a8a', 'bronze'],
+  x_gem_o:   ['gem',      '#ffb347', '#b45309', 'bronze'],
+  x_gem_g:   ['gem',      '#34d399', '#065f46', 'bronze'],
 };
 const names = () => Object.keys(ICONS);
 const has = (e) => isIcon(e) && !!ICONS[nameOf(e)];
+
+// Stock emoji that appear in data (titles, badges, card labels) → BlBot's own icons. render.js paints the icon instead.
+const STOCK = {
+  '💰': 'x_coins', '🎧': 'x_headset', '🔊': 'x_headset', '🎙': 'x_mic', '⌨': 'x_keys', '🔥': 'st_flame', '🎮': 'g_pad',
+  '📅': 'x_calendar', '🏅': 'g_medal', '⚡': 'st_bolt', '🎃': 'x_pumpkin', '🛡': 'x_shield', '🕸': 'x_web', '🛋': 'x_couch',
+  '📻': 'x_radio', '🍬': 'x_candy', '🎲': 'x_dice', '⏳': 'x_hourglass', '👑': 'x_crown', '🥇': 'x_medal1', '🥈': 'x_medal2',
+  '🥉': 'x_medal3', '🔷': 'x_gem_b', '🔶': 'x_gem_o', '🟢': 'x_gem_g', '💎': 'g_star', '👻': 'x_ghost', '🏆': 'g_trophy',
+  '🏛': 'g_arena', '🌌': 'st_moon', '🌋': 'emberkeep', '🗡': 'x_dagger', '⚔': 'x_dagger', '✒': 'g_quill', '🖋': 'g_quill',
+  '🪶': 'g_quill', '📝': 'g_quill', '📜': 'x_scroll', '📖': 'x_book', '🎉': 'g_party', '✨': 'st_spark',
+};
+/** "ico:<name>" for a stock emoji we have our own icon for, else the emoji unchanged. */
+function alias(e) {
+  const k = String(e || '').replace(/\uFE0F/g, '');
+  return STOCK[k] ? PREFIX + STOCK[k] : e;
+}
 
 // ── the painter: a pixel sprite scaled up with no smoothing ───────────────────────────────────────────────
 const pixel = require('./pixel.js');
@@ -144,4 +181,4 @@ function component(e) {
 }
 const _resetIds = () => { idMap = null; };
 
-module.exports = { isIcon, nameOf, has, names, paint, text, component, ICONS, PREFIX, _resetIds };
+module.exports = { alias, isIcon, nameOf, has, names, paint, text, component, ICONS, PREFIX, _resetIds };
