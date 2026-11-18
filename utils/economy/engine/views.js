@@ -9,6 +9,9 @@
 
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const settings = require('./settings');
+const icons = require('../../ui/icons.js');
+// «emoji + space», or nothing when the emoji is one of BlBot's own pictures that is not an uploaded Discord emoji
+const em = (e) => { const t = icons.text(e); return t ? t + ' ' : ''; };
 const dbx = require('./dbx');
 const fmt = require('./format');
 const time = require('./time');
@@ -109,7 +112,7 @@ function profileEmbed({ name, avatarUrl, data }) {
     .map((t) => ({ t, info: titleInfo(t.titleId) }))
     .filter((x) => x.info && x.info.kind === 'event')
     .sort((a, b) => a.t.earnedAt - b.t.earnedAt || a.t.titleId.localeCompare(b.t.titleId));
-  for (const x of eventTitles) featured.push(`${x.info.emoji} **${x.info.name}**`);
+  for (const x of eventTitles) featured.push(`${em(x.info.emoji)}**${x.info.name}**`);
 
   const gameBadges = data.titles.map((t) => titleInfo(t.titleId)).filter((i) => i && (i.kind === 'game' || i.kind === 'streak'));
 
@@ -125,7 +128,7 @@ function profileEmbed({ name, avatarUrl, data }) {
   if (eventTitles.length) {
     embed.addFields({
       name: '🎟️ Event titles',
-      value: eventTitles.map((x) => `${x.info.emoji} **${x.info.name}** — ${x.info.event.name} · ${x.info.tier.emoji} ${x.info.tier.label}`).join('\n').slice(0, 1024),
+      value: eventTitles.map((x) => `${em(x.info.emoji)}**${x.info.name}** — ${x.info.event.name} · ${em(x.info.tier.emoji)}${x.info.tier.label}`).join('\n').slice(0, 1024),
       inline: false,
     });
   }
@@ -134,7 +137,7 @@ function profileEmbed({ name, avatarUrl, data }) {
     embed.addFields({ name: '🔥 Daily streak', value: `**${st.current}** day(s) · best **${st.best}** · level **${data.extra.level ? data.extra.level.level : 0}**`, inline: false });
   }
   if (gameBadges.length) {
-    embed.addFields({ name: '🎮 Game badges', value: gameBadges.map((i) => `${i.emoji} **${i.name}**`).join('  ·  ').slice(0, 1024), inline: false });
+    embed.addFields({ name: '🎮 Game badges', value: gameBadges.map((i) => `${em(i.emoji)}**${i.name}**`).join('  ·  ').slice(0, 1024), inline: false });
   }
   embed.setFooter({ text: `Counted so far: ${fmt.num(data.chars)} characters · ${fmt.minutesText(data.voiceMinutes)} in voice` });
   if (avatarUrl) embed.setThumbnail(avatarUrl);
@@ -288,7 +291,7 @@ function tierRewardText(t) {
   const parts = [`${fmt.num(t.coins)} coins`];
   if (t.textPotions) parts.push(`${t.textPotions} Typing Boost`);
   if (t.voicePotions) parts.push(`${t.voicePotions} Voice Boost`);
-  parts.push(`title ${t.title.emoji} **${t.title.name}**`);
+  parts.push(`title ${em(t.title.emoji)}**${t.title.name}**`);
   return parts.join(' + ');
 }
 

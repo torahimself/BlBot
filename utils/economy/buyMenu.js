@@ -9,6 +9,9 @@ const {
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } = require('discord.js');
 const seasonal = require('./seasonalShop');
+const icons = require('../ui/icons.js');
+const em = (e) => { const t = icons.text(e); return t ? t + ' ' : ''; };           // own pictures show only if uploaded as Discord emoji
+const withEmoji = (o, e) => { const c = icons.component(e); return c ? o.setEmoji(c) : o; };
 const shopManager = require('./shopManager');
 
 const EPHEMERAL = 64;
@@ -36,18 +39,18 @@ async function home(userId, now = Date.now()) {
   let ssLabel = 'Seasonal shop', ssDisabled = true;
   if (s && ph === 'open') {
     const end = Math.floor(seasonal.windowOf(s).endAt / 1000);
-    lines.push(`${s.emoji} **${s.name}** — limited titles, card colours and backgrounds. Closes <t:${end}:R>!`);
+    lines.push(`${em(s.emoji)}**${s.name}** — limited titles, card colours and backgrounds. Closes <t:${end}:R>!`);
     ssLabel = `${s.name} (closes soon)`; ssDisabled = false;
   } else if (s && ph === 'upcoming') {
-    lines.push(`${s.emoji} **${s.name}** opens <t:${Math.floor(seasonal.windowOf(s).startAt / 1000)}:R>.`);
+    lines.push(`${em(s.emoji)}**${s.name}** opens <t:${Math.floor(seasonal.windowOf(s).startAt / 1000)}:R>.`);
     ssLabel = `${s.name} (opens soon)`;
   } else {
-    lines.push('🍂 **Seasonal shop** — closed right now. The next one is coming!');
+    lines.push('**Seasonal shop** — closed right now. The next one is coming!');
   }
   const embed = new EmbedBuilder().setColor(0x5865F2).setTitle('🛒 Shop').setDescription(lines.join('\n'));
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`shop:role:${userId}`).setLabel('Buy a custom role').setEmoji('🎭').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`shop:ss:${userId}`).setLabel(ssLabel.slice(0, 80)).setEmoji(s ? s.emoji : '🍂').setStyle(ButtonStyle.Success).setDisabled(ssDisabled),
+    withEmoji(new ButtonBuilder().setCustomId(`shop:ss:${userId}`).setLabel(ssLabel.slice(0, 80)).setStyle(ButtonStyle.Success).setDisabled(ssDisabled), s ? s.emoji : null),
   );
   return { content: '', embeds: [embed], components: [row], allowedMentions: { parse: [] } };
 }
@@ -59,19 +62,19 @@ async function shopPage(userId, note = '', now = Date.now()) {
   const owned = new Set(await seasonal.ownedIds(userId));
   const bal = await shopManager.getBalance(userId);
   const end = Math.floor(seasonal.windowOf(s).endAt / 1000);
-  const embed = new EmbedBuilder().setColor(0xE67E22).setTitle(`${s.emoji} ${s.name}`)
+  const embed = new EmbedBuilder().setColor(0xE67E22).setTitle(`${em(s.emoji)}${s.name}`.trim())
     .setDescription(`💰 Your coins: **${num(bal)}** · closes <t:${end}:R>\nWhat you buy stays yours **forever**, even after the shop closes. Colours and backgrounds are picked in **/profile → Customize**; titles show next to your name.`);
   for (const kind of Object.keys(KIND)) {
     const items = s.items.filter(i => i.kind === kind);
     if (!items.length) continue;
-    embed.addFields({ name: KIND[kind], value: items.map(i => `${owned.has(i.id) ? '✅' : i.emoji} **${i.name}** — ${owned.has(i.id) ? 'owned' : num(i.price) + ' coins'}\n-# ${i.blurb}`).join('\n').slice(0, 1024) });
+    embed.addFields({ name: KIND[kind], value: items.map(i => `${owned.has(i.id) ? '✅ ' : em(i.emoji)}**${i.name}** — ${owned.has(i.id) ? 'owned' : num(i.price) + ' coins'}\n-# ${i.blurb}`).join('\n').slice(0, 1024) });
   }
   const buyable = s.items.filter(i => !owned.has(i.id));
   const components = [];
   if (buyable.length) {
     components.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder().setCustomId(`shop:pick:${userId}`).setPlaceholder('Choose an item to buy…')
-        .addOptions(buyable.slice(0, 25).map(i => new StringSelectMenuOptionBuilder().setLabel(`${i.name} — ${num(i.price)}`.slice(0, 100)).setValue(i.id).setEmoji(i.emoji).setDescription(`${KIND[i.kind].replace(/^\S+\s/, '')}: ${i.blurb}`.slice(0, 100)))),
+        .addOptions(buyable.slice(0, 25).map(i => withEmoji(new StringSelectMenuOptionBuilder().setLabel(`${i.name} — ${num(i.price)}`.slice(0, 100)).setValue(i.id), i.emoji).setDescription(`${KIND[i.kind].replace(/^\S+\s/, '')}: ${i.blurb}`.slice(0, 100)))),
     ));
   } else embed.setFooter({ text: 'You own everything in this shop! 🎉' });
   components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`shop:home:${userId}`).setLabel('Back').setEmoji('⬅️').setStyle(ButtonStyle.Secondary)));
@@ -80,7 +83,7 @@ async function shopPage(userId, note = '', now = Date.now()) {
 
 function confirmPage(userId, item, bal) {
   const can = bal >= item.price;
-  const embed = new EmbedBuilder().setColor(can ? 0x57F287 : 0xED4245).setTitle(`${item.emoji} ${item.name}`)
+  const embed = new EmbedBuilder().setColor(can ? 0x57F287 : 0xED4245).setTitle(`${em(item.emoji)}${item.name}`.trim())
     .setDescription(`${item.blurb}\n\n**Price:** ${num(item.price)} coins\n**Your coins:** ${num(bal)}${can ? '' : '\n\n❌ You do not have enough coins.'}`);
   return {
     content: '', embeds: [embed], allowedMentions: { parse: [] },
@@ -114,7 +117,7 @@ async function handle(interaction) {
     }
     if (action === 'buy') {
       const r = await seasonal.buy(ownerId, itemId);
-      const note = r.ok ? `✅ You bought **${r.item.emoji} ${r.item.name}**! ${HOW_TO_USE[r.item.kind]}` : r.error;
+      const note = r.ok ? `✅ You bought **${r.item.name}**! ${HOW_TO_USE[r.item.kind]}` : r.error;
       await interaction.editReply(await shopPage(ownerId, note));
       return true;
     }

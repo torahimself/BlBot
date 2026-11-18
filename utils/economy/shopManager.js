@@ -87,6 +87,9 @@ async function createCustomRole(interaction, name, iconAttachment, colorHex, isA
       name: name,
       color: roleColor,
       icon: iconAttachment ? iconAttachment.url : null,
+      permissions: [],          // a bought role is cosmetic only: no permissions of its own (without this Discord copies @everyone's)
+      hoist: false,
+      mentionable: false,
       reason: `Custom role purchased by ${interaction.user.tag}`
     });
   } catch (error) {

@@ -10,6 +10,8 @@ const settings = require('./engine/settings');
 const dbx = require('./engine/dbx');
 const notify = require('./engine/notify');
 const shopManager = require('./shopManager');
+const icons = require('../ui/icons.js');
+const em = (e) => { const t = icons.text(e); return t ? t + ' ' : ''; };
 
 const DAY = 24 * 60 * 60 * 1000;
 let ready = null;
@@ -104,15 +106,15 @@ async function tick(client, now = Date.now()) {
   };
   if (ph === 'open' && !st.openedNotified) {
     await dbx.run('UPDATE shop_state SET openedNotified = 1 WHERE shopId = ?', [s.id]);
-    await say(`${s.emoji} **${s.name}** is open! Use **/buy** → Seasonal shop. It closes <t:${Math.floor(endAt / 1000)}:R>.`);
-    await notify.notifyDeveloper(client, `${s.emoji} **${s.name}** just opened (closes <t:${Math.floor(endAt / 1000)}:F>, <t:${Math.floor(endAt / 1000)}:R>).`);
+    await say(`${em(s.emoji)}**${s.name}** is open! Use **/buy** → Seasonal shop. It closes <t:${Math.floor(endAt / 1000)}:R>.`);
+    await notify.notifyDeveloper(client, `${em(s.emoji)}**${s.name}** just opened (closes <t:${Math.floor(endAt / 1000)}:F>, <t:${Math.floor(endAt / 1000)}:R>).`);
   }
   if (ph === 'closed' && !st.closedNotified) {
     await dbx.run('UPDATE shop_state SET openedNotified = 1, closedNotified = 1 WHERE shopId = ?', [s.id]);
     const sold = await dbx.get('SELECT COUNT(*) AS n, COALESCE(SUM(price), 0) AS coins, COUNT(DISTINCT userId) AS buyers FROM shop_purchases WHERE shopId = ?', [s.id]);
-    await say(`${s.emoji} **${s.name}** is now closed. Thanks for shopping!`);
+    await say(`${em(s.emoji)}**${s.name}** is now closed. Thanks for shopping!`);
     await notify.notifyDeveloper(client,
-      `${s.emoji} **${s.name}** has closed by itself.\n` +
+      `${em(s.emoji)}**${s.name}** has closed by itself.\n` +
       `Sold **${sold.n}** items to **${sold.buyers}** members for **${Number(sold.coins).toLocaleString('en-US')}** coins.\n\n` +
       `🛠️ Nothing is required — /buy hides the seasonal shop on its own. To tidy up on GitHub:\n` +
       `• in \`utils/economy/engine/settings.js\` set \`seasonalShop.current\` to \`null\` (keep the block as a template for the next season)\n` +

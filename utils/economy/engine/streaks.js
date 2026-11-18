@@ -11,14 +11,14 @@ const dbx = require('./dbx');
 const time = require('./time');
 
 const MILESTONES = [
-  { days: 3,   key: 'st_3',   name: 'Warming Up',        emoji: '🔥' },
-  { days: 7,   key: 'st_7',   name: 'On Fire',           emoji: '🔥' },
-  { days: 14,  key: 'st_14',  name: 'Fortnight Flame',   emoji: '🌟' },
-  { days: 30,  key: 'st_30',  name: 'Monthly Devotion',  emoji: '🌙' },
-  { days: 60,  key: 'st_60',  name: 'Unbroken',          emoji: '⚡' },
-  { days: 100, key: 'st_100', name: 'Centurion',         emoji: '💯' },
-  { days: 200, key: 'st_200', name: 'Eternal Flame',     emoji: '👑' },
-  { days: 365, key: 'st_365', name: 'A Full Year',       emoji: '🏆' },
+  { days: 3,   key: 'st_3',   name: 'Warming Up',        emoji: 'ico:st_spark' },
+  { days: 7,   key: 'st_7',   name: 'On Fire',           emoji: 'ico:st_flame' },
+  { days: 14,  key: 'st_14',  name: 'Fortnight Flame',   emoji: 'ico:st_comet' },
+  { days: 30,  key: 'st_30',  name: 'Monthly Devotion',  emoji: 'ico:st_moon' },
+  { days: 60,  key: 'st_60',  name: 'Unbroken',          emoji: 'ico:st_bolt' },
+  { days: 100, key: 'st_100', name: 'Centurion',         emoji: 'ico:st_ring' },
+  { days: 200, key: 'st_200', name: 'Eternal Flame',     emoji: 'ico:st_wings' },
+  { days: 365, key: 'st_365', name: 'A Full Year',       emoji: 'ico:st_sun' },
 ];
 const byKey = new Map(MILESTONES.map(m => [m.key, m]));
 const info = (titleId) => byKey.get(titleId) || null;

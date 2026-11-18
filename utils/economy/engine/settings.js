@@ -203,24 +203,24 @@ const settings = {
       'autumn-2026': {
         id: 'autumn-2026',
         name: 'Autumn Market',
-        emoji: '🍂',
+        emoji: 'ico:s_season',
         startAt: '2026-11-07T00:00:00+03:00',    // Sat 7 Nov 2026 00:00 Riyadh
         durationDays: 5,                          // closes Thu 12 Nov 00:00 Riyadh
         announceChannelId: null,                  // optional: a channel that gets "the shop is open / closed"
         items: [
           // titles
-          { id: 'title_leaf',    kind: 'title', price: 4000,  name: 'Leaf Wanderer',    emoji: '🍂', blurb: 'For those who walk the autumn paths.' },
-          { id: 'title_moon',    kind: 'title', price: 8000,  name: 'Harvest Moon',     emoji: '🌕', blurb: 'Glow bright over the whole server.' },
-          { id: 'title_ember',   kind: 'title', price: 15000, name: 'Ember Keeper',     emoji: '🔥', blurb: 'Keeper of the last warm fire of the year.' },
-          { id: 'title_sov',     kind: 'title', price: 35000, name: 'Autumn Sovereign', emoji: '🍁', blurb: 'The rarest title of the season.' },
+          { id: 'title_leaf',    kind: 'title', price: 4000,  name: 'Leaf Wanderer',    emoji: 'ico:leafwalk', blurb: 'For those who walk the autumn paths.' },
+          { id: 'title_moon',    kind: 'title', price: 8000,  name: 'Harvest Moon',     emoji: 'ico:harvest', blurb: 'Glow bright over the whole server.' },
+          { id: 'title_ember',   kind: 'title', price: 15000, name: 'Ember Keeper',     emoji: 'ico:emberkeep', blurb: 'Keeper of the last warm fire of the year.' },
+          { id: 'title_sov',     kind: 'title', price: 35000, name: 'Autumn Sovereign', emoji: 'ico:sovereign', blurb: 'The rarest title of the season.' },
           // card colours
-          { id: 'theme_amber',   kind: 'theme', price: 6000,  name: 'Amber Dusk',       emoji: '🍯', blurb: 'Warm amber glow.' },
-          { id: 'theme_maple',   kind: 'theme', price: 6000,  name: 'Maple Red',        emoji: '🍁', blurb: 'Deep red maple leaves.' },
-          { id: 'theme_plum',    kind: 'theme', price: 9000,  name: 'Plum Twilight',    emoji: '🍇', blurb: 'Purple evening sky.' },
-          { id: 'theme_mist',    kind: 'theme', price: 9000,  name: 'Misty Morning',    emoji: '🌫️', blurb: 'A soft light card with an orange accent.' },
+          { id: 'theme_amber',   kind: 'theme', price: 6000,  name: 'Tarnished Copper',  emoji: 'ico:s_copper',  blurb: 'Oxidised copper green meeting warm metal — scaled like a dragon.' },
+          { id: 'theme_maple',   kind: 'theme', price: 6000,  name: 'Blood Moon Ink',    emoji: 'ico:s_ink',     blurb: 'Black ink, cracked glass, one red glow.' },
+          { id: 'theme_plum',    kind: 'theme', price: 9000,  name: 'Oil Slick',         emoji: 'ico:s_slick',   blurb: 'Rippling petrol rainbow on a dark pool.' },
+          { id: 'theme_mist',    kind: 'theme', price: 9000,  name: 'Paper Lantern',     emoji: 'ico:s_lantern', blurb: 'A warm paper-and-ink light card drawn like a contour map.' },
           // card backgrounds
-          { id: 'bg_leaves',     kind: 'background', price: 12000, name: 'Falling Leaves', emoji: '🍃', blurb: 'Leaves drifting across your card.' },
-          { id: 'bg_harvest',    kind: 'background', price: 18000, name: 'Harvest Moon Night', emoji: '🌕', blurb: 'A huge moon over golden fields.' },
+          { id: 'bg_leaves',     kind: 'background', price: 12000, name: 'Leaf Skeletons', emoji: 'ico:s_veins', blurb: 'Glowing leaf-vein networks under dark water.' },
+          { id: 'bg_harvest',    kind: 'background', price: 18000, name: 'Black Sun Harvest', emoji: 'ico:s_eclipse', blurb: 'An eclipse over burning wheat fields.' },
         ],
       },
     },
