@@ -110,5 +110,14 @@ const START = Date.parse('2026-11-07T00:00:00+03:00'), END = START + 5 * 8640000
     const names = commandHandler.getCommands().map(c => c.name);
     eq(names.includes('event'), false, '/event hidden'); eq(names.includes('buyrole'), false, '/buyrole removed'); eq(names.includes('buy'), true, '/buy there');
   });
+  await t('custom icons: every ico: reference exists and paints; unmapped ones never leak a stock emoji into Discord text', async () => {
+    const icons = require(path.join(root, 'utils/ui/icons.js')); const R = require(path.join(root, 'utils/ui/render.js'));
+    const refs = [...s.items.map(i => i.emoji), s.emoji, ...themes.THEMES.map(x => x.emoji), ...backgrounds.all().map(b => b.emoji),
+      ...require(path.join(root, 'utils/games/badges.js')).BADGES.map(b => b.emoji), ...require(path.join(root, 'utils/economy/engine/streaks.js')).MILESTONES.map(m => m.emoji)].filter(icons.isIcon);
+    if (refs.length < 30) throw new Error('too few icon refs: ' + refs.length);
+    for (const e of refs) { if (!icons.has(e)) throw new Error('missing icon ' + e); if (!(await R.emoji(e))) throw new Error('does not paint ' + e); }
+    eq(icons.text('ico:leafwalk'), '', 'no emoji id → nothing'); eq(icons.component('ico:leafwalk'), undefined, 'no component emoji');
+    eq(icons.text('🔒'), '🔒', 'stock pass-through');
+  });
   console.log(`\n${failed ? '❌' : '✅'}  ${passed} passed, ${failed} failed`); process.exit(failed ? 1 : 0);
 })();
