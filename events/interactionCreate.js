@@ -75,6 +75,12 @@ module.exports = {
       return;
     }
 
+    // ---------- /help language button (customId "help:<lang>:<userId>") ----------
+    if (interaction.isButton() && String(interaction.customId).startsWith('help:')) {
+      await require('../commands/utility/help.js').handle(interaction);
+      return;
+    }
+
     // ---------- SHOP: /buy menu (customId "shop:…") ----------
     if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && String(interaction.customId).startsWith('shop:')) {
       await require('../utils/economy/buyMenu.js').handle(interaction);
