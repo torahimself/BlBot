@@ -1,0 +1,5 @@
+Pixel-art sprites in this folder come from free asset packs supplied by the bot owner:
+ - FantasyInventory spritesheet (32x32 item icons)
+ - "Icons" pack (32 pixel item icons)
+Check each pack's own licence page for any credit requirement before sharing the bot publicly.
+Rebuild with: python3 dev/build-pack-icons.py <folder with the extracted packs>
