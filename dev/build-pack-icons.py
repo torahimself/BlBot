@@ -19,6 +19,7 @@ MAP = {
   's_copper': ic(25),     's_ink': fi(3, 0),      's_slick': fi(3, 9),    's_lantern': fi(2, 3),
   's_veins': ic(21),      's_glass': fi(2, 8),    's_topo': fi(2, 7),     's_eclipse': fi(4, 9),
   's_season': ic(31),
+  'x_coins': fi(1, 7),    'x_hourglass': fi(1, 1), 'x_scroll': fi(3, 6),
   'x_skull': fi(1, 6),    'x_cauldron': fi(4, 4), 'x_potion': fi(0, 0),   'x_orb': fi(0, 7),
   'x_candle': fi(1, 3),   'x_shroom': ic(32),     'x_eye': ic(29),        'x_book': fi(0, 4),
 }
